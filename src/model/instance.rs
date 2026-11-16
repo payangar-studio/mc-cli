@@ -81,6 +81,11 @@ pub struct InstanceState {
     /// Path relative to the instance directory, with `/` separators, to sha256.
     #[serde(default)]
     pub files: BTreeMap<String, String>,
+    /// Files of `files` that belong to a manifest entry (jars, resource
+    /// packs) to its key, so that such a file gone from the instance is still
+    /// known as that entry once the manifest has another version of it.
+    #[serde(default)]
+    pub entries: BTreeMap<String, String>,
 }
 
 impl InstanceState {
@@ -115,6 +120,7 @@ impl InstanceState {
     /// Forgets a file the CLI removed.
     pub fn forget(&mut self, relative: &str) {
         self.files.remove(relative);
+        self.entries.remove(relative);
     }
 }
 

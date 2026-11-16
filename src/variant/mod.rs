@@ -21,12 +21,13 @@ use std::path::{Path, PathBuf};
 use crate::error::{Context, Error, Result};
 use crate::launcher::running::GameDetector;
 use crate::model::instance::{self, DISABLED_SUFFIX, InstanceState, Instances, disabled_in_app};
-use crate::model::manifest::{self, Entry, Manifest};
+use crate::model::manifest::{self, Entry, Hashes, Manifest};
 use crate::model::sha256_file;
 use crate::model::socle::SocleConfig;
-use crate::model::variants::{self, Variants};
+use crate::model::variants::{self, Resolved, Variants};
 use crate::ops::local::restore_hint;
 use crate::store::download::{Sources, download_all};
+use crate::store::hash::hash_file;
 use crate::store::inventory::inventory;
 use crate::store::{file_path, files_in, write_atomic};
 
@@ -89,10 +90,9 @@ pub fn load(ctx: &LoadContext<'_>, variant: &str, force: bool) -> Result<LoadRep
     }
 
     let state = InstanceState::load(&instance)?;
-    let drifted: Vec<String> = instance::drift(&instance, &state)?
-        .iter()
-        .map(|p| p.to_string_lossy().into_owned())
-        .collect();
+    let expected = Expected::new(&manifest, &resolved, config_files(root, variant)?);
+    let configs = &expected.configs;
+    let drifted = drift(&instance, &state, Some(&expected))?;
     let mut disabled = Vec::new();
     for rel in &drifted {
         if disabled_in_app(&instance, &state, rel)? {
@@ -127,7 +127,7 @@ pub fn load(ctx: &LoadContext<'_>, variant: &str, force: bool) -> Result<LoadRep
     // Sort the instance's files: the variant's, other known ones, unknown ones.
     let mut new_state = InstanceState {
         variant: Some(variant.to_owned()),
-        files: BTreeMap::new(),
+        ..Default::default()
     };
     let mut present = BTreeSet::new();
     let mut to_remove = Vec::new();
@@ -136,6 +136,7 @@ pub fn load(ctx: &LoadContext<'_>, variant: &str, force: bool) -> Result<LoadRep
         match manifest.entries.iter().find(|e| hashes.matches(&e.hashes)) {
             Some(e) if in_variant.contains(e.key.as_str()) => {
                 present.insert(e.key.as_str());
+                new_state.entries.insert(rel.clone(), e.key.clone());
                 new_state.files.insert(rel, hashes.sha256);
             }
             Some(_) => to_remove.push(rel),
@@ -147,13 +148,13 @@ pub fn load(ctx: &LoadContext<'_>, variant: &str, force: bool) -> Result<LoadRep
     }
     let mut to_copy = Vec::new();
     for entry in wanted.iter().filter(|e| !present.contains(e.key.as_str())) {
-        to_copy.push((file_path(root, entry)?, entry.instance_path()));
+        to_copy.push((file_path(root, entry)?, entry.instance_path(), &entry.key));
     }
 
     // A foreign file where a file of the variant goes is never overwritten silently.
     let in_the_way: Vec<String> = to_copy
         .iter()
-        .map(|(_, rel)| rel.clone())
+        .map(|(_, rel, _)| rel.clone())
         .filter(|rel| instance.join(rel).exists() && !to_remove.contains(rel))
         .collect();
     if !in_the_way.is_empty() && !force {
@@ -170,9 +171,8 @@ pub fn load(ctx: &LoadContext<'_>, variant: &str, force: bool) -> Result<LoadRep
 
     // Nor is a config file of the instance the CLI never wrote, such as one
     // the game created, when the variant has other content for it.
-    let configs = config_files(root, variant)?;
     let mut foreign = Vec::new();
-    for (rel, source) in &configs {
+    for (rel, source) in configs {
         let dest = instance.join(rel);
         if !state.files.contains_key(rel) && dest.is_file() && !same_content(source, &dest)? {
             foreign.push(rel.clone());
@@ -211,9 +211,10 @@ pub fn load(ctx: &LoadContext<'_>, variant: &str, force: bool) -> Result<LoadRep
         fs::remove_file(&path).context(format!("removing {}", path.display()))?;
         report.removed.push(rel);
     }
-    for (source, rel) in to_copy {
+    for (source, rel, key) in to_copy {
         copy_file(&source, &instance.join(&rel))?;
         new_state.record(&instance, &rel)?;
+        new_state.entries.insert(rel.clone(), key.clone());
         report.copied.push(rel);
     }
     // Forced past a file the app disabled: the repository wins, so the file
@@ -223,7 +224,7 @@ pub fn load(ctx: &LoadContext<'_>, variant: &str, force: bool) -> Result<LoadRep
         fs::remove_file(&path).context(format!("removing {}", path.display()))?;
     }
 
-    for (rel, source) in &configs {
+    for (rel, source) in configs {
         let dest = instance.join(rel);
         if !(dest.is_file() && same_content(source, &dest)?) {
             copy_file(source, &dest)?;
@@ -249,6 +250,95 @@ pub fn load(ctx: &LoadContext<'_>, variant: &str, force: bool) -> Result<LoadRep
 
     new_state.save(&instance)?;
     Ok(report)
+}
+
+/// What loading a variant leaves in the instance, by path relative to it: its
+/// config files, by their source in the repository, and the files of its
+/// entries (jars, resource packs), by their manifest hashes. Also the keys of
+/// its entries.
+pub struct Expected {
+    configs: BTreeMap<String, PathBuf>,
+    files: BTreeMap<String, Hashes>,
+    keys: BTreeSet<String>,
+}
+
+impl Expected {
+    fn new(manifest: &Manifest, resolved: &Resolved, configs: BTreeMap<String, PathBuf>) -> Self {
+        let files = resolved
+            .keys
+            .iter()
+            .filter_map(|k| manifest.get(k))
+            .map(|e| (e.instance_path(), e.hashes.clone()))
+            .collect();
+        Self {
+            configs,
+            files,
+            keys: resolved.keys.iter().cloned().collect(),
+        }
+    }
+
+    /// What loading `variant` from the repository at `root` would leave in
+    /// the instance.
+    pub fn of(root: &Path, manifest: &Manifest, variant: &str) -> Result<Self> {
+        let resolved = load_variants(root)?.resolve(variant, manifest)?;
+        Ok(Self::new(manifest, &resolved, config_files(root, variant)?))
+    }
+
+    /// Whether `relative`, a file the CLI wrote into `instance`, is already as
+    /// loading the variant would leave it: present with the content the
+    /// repository has for it, or gone where the variant writes nothing. The
+    /// file of an entry (a jar, a resource pack) gone is in sync only once
+    /// the variant no longer has that entry, under any file name, and not
+    /// when the app disabled it: loading removes its `.disabled` copy.
+    fn in_sync(&self, instance: &Path, state: &InstanceState, relative: &str) -> Result<bool> {
+        let path = instance.join(relative);
+        if !path.exists() {
+            if self.configs.contains_key(relative) || self.files.contains_key(relative) {
+                return Ok(false);
+            }
+            if relative.starts_with(&format!("{CONFIG_DIR}/")) {
+                return Ok(true);
+            }
+            // Without a recorded key, nothing tells which entry it was.
+            let dropped = state
+                .entries
+                .get(relative)
+                .is_some_and(|key| !self.keys.contains(key));
+            return Ok(dropped && !disabled_in_app(instance, state, relative)?);
+        }
+        if let Some(source) = self.configs.get(relative) {
+            return same_content(source, &path);
+        }
+        match self.files.get(relative) {
+            Some(hashes) => Ok(hash_file(&path)
+                .context(format!("reading {}", path.display()))?
+                .matches(hashes)),
+            None => Ok(false),
+        }
+    }
+}
+
+/// Files of the instance changed or gone since the CLI wrote them, relative
+/// to the instance with `/` separators, sorted, but those already as loading
+/// `expected`'s variant would leave them: loading would lose nothing there.
+/// Without `expected`, every change counts.
+pub fn drift(
+    instance: &Path,
+    state: &InstanceState,
+    expected: Option<&Expected>,
+) -> Result<Vec<String>> {
+    let mut drifted = Vec::new();
+    for rel in instance::drift(instance, state)? {
+        let rel = rel.to_string_lossy().into_owned();
+        let in_sync = match expected {
+            Some(expected) => expected.in_sync(instance, state, &rel)?,
+            None => false,
+        };
+        if !in_sync {
+            drifted.push(rel);
+        }
+    }
+    Ok(drifted)
 }
 
 /// The variant loaded in the pack's instance on this machine, if the pack has an

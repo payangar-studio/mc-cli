@@ -12,13 +12,14 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::model::instance::{InstanceState, Instances, disabled_in_app, drift};
+use crate::model::instance::{InstanceState, Instances, disabled_in_app};
 use crate::model::manifest::{self, Manifest};
 use crate::model::socle::{SocleConfig, VersionCheck, cli_version, compare_versions};
 use crate::ops::local::{LocalEntry, local_entries};
 use crate::ops::manifest::is_local_path;
 use crate::store::files_in;
 use crate::store::inventory::inventory;
+use crate::variant::{self, Expected};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Status {
@@ -129,7 +130,7 @@ pub fn status(root: &Path, instances_file: &Path) -> Result<Status> {
     let changed = jars(&inv.mismatched);
 
     let instance = match Instances::existing(instances_file, &config.init.name)? {
-        Some(dir) => Some(instance(&dir, &manifest)?),
+        Some(dir) => Some(instance(root, &dir, &manifest)?),
         None => None,
     };
 
@@ -150,12 +151,16 @@ pub fn status(root: &Path, instances_file: &Path) -> Result<Status> {
     })
 }
 
-fn instance(dir: &Path, manifest: &Manifest) -> Result<Instance> {
+fn instance(root: &Path, dir: &Path, manifest: &Manifest) -> Result<Instance> {
     let state = InstanceState::load(dir)?;
-    let drift: Vec<String> = drift(dir, &state)?
-        .iter()
-        .map(|p| p.to_string_lossy().into_owned())
-        .collect();
+    // Compared to what loading the variant again would leave. When the
+    // repository cannot tell (no variants.toml, a variant it no longer has),
+    // every change since the last load is drift: that never hides one.
+    let expected = state
+        .variant
+        .as_deref()
+        .and_then(|variant| Expected::of(root, manifest, variant).ok());
+    let drift = variant::drift(dir, &state, expected.as_ref())?;
     let mut disabled = Vec::new();
     for rel in &drift {
         if disabled_in_app(dir, &state, rel)? {
@@ -369,6 +374,7 @@ mod tests {
     use super::*;
     use crate::error::ErrorKind;
     use crate::model::socle::InitValues;
+    use crate::model::variants;
     use crate::store::download::tests::{entry, manifest};
     use std::collections::BTreeMap;
     use std::fs;
@@ -421,6 +427,11 @@ mod tests {
                 "config/jei.toml",
             ] {
                 state.record(&setup.instance(), file).unwrap();
+            }
+            for key in ["jei", "iris"] {
+                state
+                    .entries
+                    .insert(format!("mods/{key}-1.0.0.jar"), key.to_owned());
             }
             state.save(&setup.instance()).unwrap();
             let mut instances = Instances::default();
@@ -495,6 +506,40 @@ mod tests {
         assert!(out.contains("variant: default"), "{out}");
         assert!(out.contains("manifest: up to date"), "{out}");
         assert!(!out.contains("drift"), "{out}");
+    }
+
+    #[test]
+    fn a_file_as_the_repository_would_write_it_is_not_drift() {
+        let setup = Setup::new();
+        setup.write_repo(variants::FILE_NAME, b"[default]\nremove = [\"iris\"]\n");
+        // Changed in game, then brought back into the repository.
+        setup.write_instance("config/jei.toml", b"a = 2");
+        setup.write_repo("config/jei.toml", b"a = 2");
+        // Removed in the app, then from the variant.
+        fs::remove_file(setup.instance().join("mods/iris-1.0.0.jar")).unwrap();
+        assert!(setup.status().instance.unwrap().drift.is_empty());
+
+        // Back in the variant, the deleted jar is drift again.
+        setup.write_repo(variants::FILE_NAME, b"[default]\n");
+        assert_eq!(
+            setup.status().instance.unwrap().drift,
+            ["mods/iris-1.0.0.jar"]
+        );
+    }
+
+    #[test]
+    fn without_a_variant_to_compare_with_drift_is_every_change() {
+        let setup = Setup::new();
+        setup.write_instance("config/jei.toml", b"a = 2");
+        setup.write_repo("config/jei.toml", b"a = 2");
+        // No variants.toml: the repository's content is unknown.
+        assert_eq!(setup.status().instance.unwrap().drift, ["config/jei.toml"]);
+        // A variant the repository no longer has.
+        setup.write_repo(variants::FILE_NAME, b"[default]\n\n[variants.server]\n");
+        let mut state = InstanceState::load(&setup.instance()).unwrap();
+        state.variant = Some("gone".into());
+        state.save(&setup.instance()).unwrap();
+        assert_eq!(setup.status().instance.unwrap().drift, ["config/jei.toml"]);
     }
 
     #[test]

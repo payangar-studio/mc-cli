@@ -240,6 +240,19 @@ fn state_reflects_exactly_the_files_written() {
             ]
         )
     );
+    let mods: Vec<(&str, &str)> = state
+        .entries
+        .iter()
+        .map(|(p, k)| (p.as_str(), k.as_str()))
+        .collect();
+    assert_eq!(
+        mods,
+        [
+            ("mods/a-1.0.0.jar", "a"),
+            ("mods/b-1.0.0.jar", "b"),
+            ("mods/c-1.0.0.jar", "c")
+        ]
+    );
 
     // Back from `server`, its own config file is removed.
     s.load("server", false).unwrap();
@@ -598,4 +611,127 @@ fn a_local_mod_is_copied_from_mods_local_into_the_instance_mods() {
         "{err}"
     );
     assert!(!err.hint().contains("modpack install"), "{}", err.hint());
+}
+
+#[test]
+fn an_instance_file_the_repository_now_has_is_not_drift() {
+    let s = Setup::new();
+    s.load(variants::DEFAULT_VARIANT, false).unwrap();
+    write(&s.instance(), "config/a.toml", "changed in game");
+    write(s.root(), "config/a.toml", "changed in game");
+
+    let report = s.load(variants::DEFAULT_VARIANT, false).unwrap();
+    assert!(report.forced.is_empty(), "{report:?}");
+    assert!(report.written.is_empty(), "{report:?}");
+    assert_eq!(
+        s.state().files.get("config/a.toml"),
+        on_disk(&s.instance(), &["config/a.toml"]).get("config/a.toml")
+    );
+}
+
+#[test]
+fn a_file_gone_from_the_instance_and_the_variant_is_not_drift() {
+    let s = Setup::new();
+    s.load(variants::DEFAULT_VARIANT, false).unwrap();
+    fs::remove_file(s.instance().join("mods/b-1.0.0.jar")).unwrap();
+    fs::remove_file(s.instance().join("config/sub/b.toml")).unwrap();
+    write(
+        s.root(),
+        variants::FILE_NAME,
+        "[default]\nremove = [\"extra\", \"b\"]\n",
+    );
+    fs::remove_file(s.root().join("config/sub/b.toml")).unwrap();
+
+    let report = s.load(variants::DEFAULT_VARIANT, false).unwrap();
+    assert!(report.forced.is_empty(), "{report:?}");
+    let state = s.state();
+    assert!(!state.files.contains_key("mods/b-1.0.0.jar"));
+    assert!(!state.files.contains_key("config/sub/b.toml"));
+}
+
+#[test]
+fn a_jar_deleted_while_the_variant_has_its_mod_under_another_name_is_drift() {
+    let s = Setup::new();
+    s.load(variants::DEFAULT_VARIANT, false).unwrap();
+    assert_eq!(
+        s.state()
+            .entries
+            .get("mods/b-1.0.0.jar")
+            .map(String::as_str),
+        Some("b")
+    );
+    fs::remove_file(s.instance().join("mods/b-1.0.0.jar")).unwrap();
+    // The manifest moved `b` to a jar under another name meanwhile.
+    let path = s.root().join(manifest::FILE_NAME);
+    let mut m = Manifest::load(&path).unwrap();
+    let mut b2 = entry("b", b"b2");
+    b2.path = "mods/b-2.0.0.jar".into();
+    m.upsert(b2);
+    m.save(&path).unwrap();
+    write(s.root(), "mods/b-2.0.0.jar", "b2");
+
+    let err = s.load(variants::DEFAULT_VARIANT, false).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::Blocked);
+    assert!(err.to_string().contains("\n  - mods/b-1.0.0.jar"), "{err}");
+    assert!(!s.instance().join("mods/b-2.0.0.jar").exists());
+
+    // A jar whose mod the state does not name cannot be told dropped either.
+    let mut state = s.state();
+    state.entries.clear();
+    state.save(&s.instance()).unwrap();
+    write(
+        s.root(),
+        variants::FILE_NAME,
+        "[default]\nremove = [\"extra\", \"b\"]\n",
+    );
+    assert!(s.load(variants::DEFAULT_VARIANT, false).is_err());
+}
+
+#[test]
+fn a_resource_pack_deleted_is_drift_until_the_variant_drops_it() {
+    let s = Setup::new();
+    let mut faithful = entry("faithful", b"faithful");
+    faithful.kind = crate::model::manifest::Kind::Resourcepack;
+    faithful.path = "resourcepacks/faithful.zip".into();
+    let path = s.root().join(manifest::FILE_NAME);
+    let mut lock = Manifest::load(&path).unwrap();
+    lock.upsert(faithful);
+    lock.save(&path).unwrap();
+    write(s.root(), "resourcepacks/faithful.zip", "faithful");
+    s.load(variants::DEFAULT_VARIANT, false).unwrap();
+    fs::remove_file(s.instance().join("resourcepacks/faithful.zip")).unwrap();
+
+    let err = s.load(variants::DEFAULT_VARIANT, false).unwrap_err();
+    assert!(
+        err.to_string().contains("- resourcepacks/faithful.zip"),
+        "{err}"
+    );
+
+    write(
+        s.root(),
+        variants::FILE_NAME,
+        "[default]\nremove = [\"extra\", \"faithful\"]\n",
+    );
+    let report = s.load(variants::DEFAULT_VARIANT, false).unwrap();
+    assert!(report.forced.is_empty(), "{report:?}");
+}
+
+#[test]
+fn a_jar_disabled_in_the_app_stays_drift_once_the_variant_drops_it() {
+    let s = Setup::new();
+    s.load(variants::DEFAULT_VARIANT, false).unwrap();
+    fs::rename(
+        s.instance().join("mods/a-1.0.0.jar"),
+        s.instance().join("mods/a-1.0.0.jar.disabled"),
+    )
+    .unwrap();
+
+    // `server` has no `a`, but its disabled copy is still in the instance.
+    let err = s.load("server", false).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::Blocked);
+    assert!(
+        err.to_string()
+            .contains("mods/a-1.0.0.jar (disabled in the app)"),
+        "{err}"
+    );
 }

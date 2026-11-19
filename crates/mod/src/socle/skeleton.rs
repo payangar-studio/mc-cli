@@ -13,6 +13,10 @@
 //!   Fabric ones are named in the generated `fabric.mod.json`
 //!   (`build-logic/src/main/kotlin/ModMetadata.kt`): renaming them breaks it;
 //! - a server-only mod has no client code;
+//! - every mod but a client-only one declares its config schema and the
+//!   shared library's network (`ModNetwork`) in `CommonEntrypoint`, and its
+//!   loaders' entrypoints register it: the side matrix (`mod test`) expects
+//!   the side check of a mod required on both sides;
 //! - one example test per layer the loaders run (`docs/mod-tests.md`): unit
 //!   tests beside the shared code, a Fabric Loader one in `fabric/`, NeoForge
 //!   integration tests in `neoforge/`, and the gametests of each loader in its

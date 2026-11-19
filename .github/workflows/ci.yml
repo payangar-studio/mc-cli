@@ -141,7 +141,7 @@ jobs:
           rustup toolchain install stable --profile minimal --no-self-update
           rustup default stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo test -p mc-mod --locked --test side_matrix -- --ignored --test-threads=1 "$TEST"
+      - run: cargo test -p mc-mod --locked --test side_matrix -- --ignored --test-threads=1 --nocapture "$TEST"
         env:
           TEST: ${{ matrix.test }}
           MOD_SIDES_ARTIFACTS: ${{ runner.temp }}/mod-sides

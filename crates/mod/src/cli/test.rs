@@ -183,7 +183,10 @@ fn build(root: &Path, loaders: &[Loader]) -> Result<()> {
 }
 
 fn failed(reason: String) -> Error {
-    Error::internal(reason, "see the message above")
+    Error::internal(
+        reason,
+        "the message says which step failed; rerun with -v to follow the steps",
+    )
 }
 
 fn indent(text: &str) -> String {

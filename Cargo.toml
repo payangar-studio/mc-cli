@@ -41,3 +41,4 @@ predicates = "3.1.4"
 tokio = { version = "1.54.1", features = ["rt-multi-thread"] }
 wiremock = "0.6.5"
 jsonschema = { version = "0.61.2", default-features = false }
+yaml-rust2 = "0.13.0"

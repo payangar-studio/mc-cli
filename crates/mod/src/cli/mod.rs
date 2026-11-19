@@ -9,6 +9,7 @@ use crate::context::Context;
 use crate::error::Result;
 
 pub mod init;
+pub mod setup;
 pub mod update;
 
 /// CLI of the Minecraft mod socle.
@@ -44,12 +45,15 @@ pub enum Command {
     Init(init::Args),
     /// Bring the repository's socle to this CLI's version
     Update(update::Args),
+    /// Configure the mod's GitHub repository: ruleset of the release tags, vault variables, CODEOWNERS
+    Setup(setup::Args),
 }
 
 pub fn run(command: Command, ctx: &Context) -> Result<()> {
     match command {
         Command::Init(args) => init::run(args, ctx),
         Command::Update(args) => update::run(args, ctx),
+        Command::Setup(args) => setup::run(args, ctx),
     }
 }
 

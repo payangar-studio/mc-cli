@@ -424,10 +424,22 @@ fn write(path: &Path, contents: &[u8]) -> Result<()> {
 }
 
 /// Points `CLAUDE.md` at `AGENTS.md`, unless something named `CLAUDE.md`
-/// already exists or there is no `AGENTS.md` to point at.
+/// already exists or there is no `AGENTS.md` to point at. A `CLAUDE.md` of
+/// its own is kept, with a warning.
 fn link_claude_md(root: &Path) -> Result<()> {
     let link = root.join(CLAUDE_MD);
-    if link.symlink_metadata().is_ok() || !root.join(AGENTS_MD).exists() {
+    if !root.join(AGENTS_MD).exists() {
+        return Ok(());
+    }
+    if let Ok(meta) = link.symlink_metadata() {
+        // A file that only imports AGENTS.md is as good as the link.
+        let imports =
+            std::fs::read_to_string(&link).is_ok_and(|s| s.trim() == format!("@{AGENTS_MD}"));
+        if meta.is_file() && !imports {
+            tracing::warn!(
+                "{CLAUDE_MD} is not a link to {AGENTS_MD}: agents reading one miss the other. Move its content into {AGENTS_MD}, then replace it with a link to {AGENTS_MD}"
+            );
+        }
         return Ok(());
     }
     #[cfg(unix)]

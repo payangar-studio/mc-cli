@@ -155,6 +155,9 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
         "Review {}, then build with `./gradlew build`.",
         mod_toml::FILE_NAME
     );
+    println!(
+        "Once the repository is on GitHub, run `mod setup` to protect its release tags and set its vault variables."
+    );
     Ok(())
 }
 

@@ -1,4 +1,4 @@
-# Managed by modpack-cli. `modpack update` rewrites the version and keeps the values.
+# Managed by mc-cli. `modpack update` rewrites the version and keeps the values.
 
 version = "0.1.0"
 

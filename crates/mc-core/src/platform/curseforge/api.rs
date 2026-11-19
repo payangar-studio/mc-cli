@@ -22,7 +22,7 @@ pub const CLASS_RESOURCE_PACKS: u32 = 12;
 /// `FileRelationType` of a required dependency.
 pub const REQUIRED_DEPENDENCY: u8 = 3;
 
-const USER_AGENT: &str = concat!("payangar-studio/modpack-cli/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("payangar-studio/mc-cli/", env!("CARGO_PKG_VERSION"));
 
 pub struct Api {
     base: String,
@@ -237,7 +237,7 @@ fn read<T: DeserializeOwned>(
     let data: Data<T> = response.body_mut().read_json().map_err(|e| {
         Error::internal(
             format!("CurseForge sent an unexpected answer while {what}"),
-            "retry later; if it keeps failing, report it at https://github.com/payangar-studio/modpack-cli/issues",
+            "retry later; if it keeps failing, report it at https://github.com/payangar-studio/mc-cli/issues",
         )
         .with_source(e)
     })?;

@@ -15,7 +15,7 @@ use crate::error::Result;
 /// The record, relative to the repository root.
 pub const FILE: &str = ".modpack/local/installed.toml";
 
-const HEADER: &str = "# Written by modpack-cli: the jars it downloaded into mods/ on this machine. Do not edit by hand.\n\n";
+const HEADER: &str = "# Written by mc-cli: the jars it downloaded into mods/ on this machine. Do not edit by hand.\n\n";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

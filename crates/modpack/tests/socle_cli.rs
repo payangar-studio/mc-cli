@@ -441,7 +441,7 @@ fn update_refuses_a_repository_newer_than_the_cli() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("newer than this CLI"))
-        .stderr(predicate::str::contains("upgrade modpack-cli"));
+        .stderr(predicate::str::contains("upgrade mc-cli"));
 }
 
 #[test]

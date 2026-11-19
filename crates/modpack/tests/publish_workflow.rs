@@ -89,7 +89,7 @@ fn the_caller_pins_this_release() {
     let text = template();
     assert!(
         text.contains(&format!(
-            "uses: payangar-studio/modpack-cli/.github/workflows/publish-modpack.yml@{tag}\n"
+            "uses: payangar-studio/mc-cli/.github/workflows/publish-modpack.yml@{tag}\n"
         )),
         "the reusable workflow is not pinned to {tag}"
     );

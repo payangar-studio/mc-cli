@@ -1,4 +1,4 @@
-# modpack-cli
+# mc-cli
 
 Rust CLIs of the Minecraft socles, in one Cargo workspace: the shared library `mc-core` (`crates/mc-core/`) and the binary crate `modpack` (`crates/modpack/`).
 The design lives in `payangar-studio/environment`, branch `design`, files 00-cadrage.md and 01-socle-modpack.md under docs/design; it is the source of truth for behaviour.
@@ -45,7 +45,9 @@ Each issue owns its command handler (`crates/modpack/src/cli/<command>.rs`, incl
 
 ## Release
 
-Pushing a `v*` tag builds the static Linux binary (`x86_64-unknown-linux-musl`) and publishes a GitHub Release with `modpack-<version>-x86_64-unknown-linux-musl.tar.gz` and its `.sha256`. A tag with a suffix (`v0.1.0-rc1`) is published as a prerelease.
+Pushing a `v*` tag builds every binary of the workspace for `x86_64-unknown-linux-musl` and publishes a GitHub Release with `<binary>-<version>-x86_64-unknown-linux-musl.tar.gz` and its `.sha256` for each. A tag with a suffix (`v0.1.0-rc1`) is published as a prerelease.
+
+Every `uses:` of `.github/` is pinned by full commit SHA with its version in a comment; `scripts/check-workflow-pins.sh` enforces it in CI.
 
 ## Harness
 

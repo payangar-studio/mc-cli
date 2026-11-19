@@ -50,7 +50,7 @@ pub struct Socle {
     pub dir: &'static str,
     /// The binary, as messages name its commands (`modpack`).
     pub bin: &'static str,
-    /// The CLI, as file headers and upgrade hints name it (`modpack-cli`).
+    /// The CLI, as file headers and upgrade hints name it (`mc-cli`).
     pub tool: &'static str,
     /// Version of the CLI, which is also the version of the socle it writes.
     pub version: &'static str,

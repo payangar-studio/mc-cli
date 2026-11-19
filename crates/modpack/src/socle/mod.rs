@@ -43,7 +43,7 @@ pub const HASH: Markers = Markers {
 pub static SOCLE: Socle = Socle {
     dir: SOCLE_DIR,
     bin: "modpack",
-    tool: "modpack-cli",
+    tool: "mc-cli",
     version: env!("CARGO_PKG_VERSION"),
     files: &FILES,
     blocks: &BLOCKS,

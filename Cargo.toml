@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/mc-core", "crates/modpack"]
+members = ["crates/mc-core", "crates/modpack", "crates/mod"]
 resolver = "3"
 
 [workspace.package]

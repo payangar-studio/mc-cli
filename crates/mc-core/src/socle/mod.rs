@@ -419,10 +419,10 @@ fn write(path: &Path, contents: &[u8]) -> Result<()> {
 }
 
 /// Points `CLAUDE.md` at `AGENTS.md`, unless something named `CLAUDE.md`
-/// already exists.
+/// already exists or there is no `AGENTS.md` to point at.
 fn link_claude_md(root: &Path) -> Result<()> {
     let link = root.join(CLAUDE_MD);
-    if link.symlink_metadata().is_ok() {
+    if link.symlink_metadata().is_ok() || !root.join(AGENTS_MD).exists() {
         return Ok(());
     }
     #[cfg(unix)]
@@ -506,6 +506,20 @@ mod tests {
             ..TEST
         };
         socle.socle_files();
+    }
+
+    #[test]
+    fn claude_md_is_linked_only_to_an_existing_agents_md() {
+        let dir = tempfile::tempdir().unwrap();
+        link_claude_md(dir.path()).unwrap();
+        assert!(dir.path().join(CLAUDE_MD).symlink_metadata().is_err());
+        fs::write(dir.path().join(AGENTS_MD), "# Agents\n").unwrap();
+        link_claude_md(dir.path()).unwrap();
+        #[cfg(unix)]
+        assert_eq!(
+            fs::read_link(dir.path().join(CLAUDE_MD)).unwrap(),
+            Path::new(AGENTS_MD)
+        );
     }
 
     #[cfg(unix)]

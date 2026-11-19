@@ -1,0 +1,334 @@
+//! Building the pack artifacts: one per variant and per platform.
+//!
+//! Each artifact holds the mods and resource packs of the resolved variant,
+//! and under `overrides/` the base `config/` then the variant's
+//! `overrides/<variant>/config/`. Before building for a platform, every entry
+//! goes through its `pack_eligibility`; an entry it refuses blocks that
+//! platform for that variant only. The platform alone decides, so an entry
+//! with no table for a platform (hosted on GitHub, say) may still be packed
+//! for it.
+//!
+//! A local entry (a file of `mods-local/` or `resourcepacks-local/`) goes into
+//! the pack's overrides, at its place in an instance (`overrides/mods/<name>`,
+//! `overrides/resourcepacks/<name>`), for every platform: no platform is asked
+//! whether it is eligible. Every build warns about local entries, approved or
+//! not, and about what each platform says of embedded files; it never blocks
+//! on them.
+
+mod version;
+
+use std::fmt::Write as _;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use serde::Serialize;
+
+pub use version::{DEV_VERSION, version};
+
+use crate::error::{Context, Error, Result};
+use crate::model::manifest::{self, Entry, Manifest, normalize_key};
+use crate::model::socle::SocleConfig;
+use crate::model::variants::{self, Variants};
+use crate::ops::local::LocalEntry;
+use crate::platform::{
+    Capability, Eligibility, Operation, Override, PackBuild, PackPlatform, Registry, unsupported,
+};
+use crate::socle::SOCLE;
+use crate::store::file_path;
+use crate::store::hash::hash_file;
+
+/// Default output directory, relative to the repository root.
+pub const OUT_DIR: &str = "dist";
+
+/// What to build.
+#[derive(Debug, Clone)]
+pub struct Request<'a> {
+    /// One variant; every variant when `None`.
+    pub variant: Option<&'a str>,
+    /// One platform; every platform that builds packs by code when `None`.
+    pub platform: Option<&'a str>,
+    pub out_dir: &'a Path,
+    pub version: &'a str,
+}
+
+/// What was built, and what could not be. Serialized as the `--json` output.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Report {
+    pub version: String,
+    pub artifacts: Vec<Artifact>,
+    pub blocked: Vec<Blocked>,
+    /// The local entries embedded in at least one pack built.
+    pub local: Vec<LocalEntry>,
+    /// What to check about the local entries; never blocking.
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Artifact {
+    pub variant: String,
+    pub platform: String,
+    pub path: PathBuf,
+}
+
+/// A variant a platform could not pack, and the entries that stopped it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Blocked {
+    pub variant: String,
+    pub platform: String,
+    pub mods: Vec<BlockedMod>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BlockedMod {
+    pub key: String,
+    pub reason: String,
+}
+
+impl Report {
+    /// The error to exit with when a platform was blocked for some variant.
+    pub fn blocked_error(&self) -> Option<Error> {
+        if self.blocked.is_empty() {
+            return None;
+        }
+        let mut what = "some packs could not be built:".to_owned();
+        for b in &self.blocked {
+            let _ = write!(
+                what,
+                "\n  - {} pack of variant `{}`:",
+                b.platform, b.variant
+            );
+            for m in &b.mods {
+                let _ = write!(what, "\n      `{}`: {}", m.key, m.reason);
+            }
+        }
+        Some(Error::blocked(
+            what,
+            "leave these entries out of the variant in variants.toml, or build only the other platforms with --platform",
+        ))
+    }
+}
+
+/// Builds the artifacts of the repository at `root`.
+pub fn build(root: &Path, registry: &Registry, request: &Request<'_>) -> Result<Report> {
+    let platforms = platforms(registry, request.platform)?;
+    let name = SocleConfig::load(&SOCLE, root)?.init.name;
+    let manifest = Manifest::load(&root.join(manifest::FILE_NAME))?;
+    let variants = Variants::load(&root.join(variants::FILE_NAME))?;
+    let variant_names = match request.variant {
+        Some(variant) => vec![variant],
+        None => variants.names(),
+    };
+    let base = config_files(&root.join("config"))?;
+    fs::create_dir_all(request.out_dir)
+        .context(format!("creating {}", request.out_dir.display()))?;
+    let pack_slug = Some(normalize_key(&name))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "modpack".to_owned());
+
+    let mut report = Report {
+        version: request.version.to_owned(),
+        artifacts: Vec::new(),
+        blocked: Vec::new(),
+        local: Vec::new(),
+        warnings: Vec::new(),
+    };
+    // Local entries embedded so far, each file checked once against the manifest.
+    let mut embedded: std::collections::BTreeMap<&str, (&Entry, PathBuf)> =
+        std::collections::BTreeMap::new();
+    for variant in variant_names {
+        let resolved = variants.resolve(variant, &manifest)?;
+        let (local, mods): (Vec<&Entry>, Vec<&Entry>) = resolved
+            .keys
+            .iter()
+            .map(|k| {
+                manifest
+                    .get(k)
+                    .expect("a resolved variant only holds manifest keys")
+            })
+            .partition(|e| e.is_local());
+        let mut overrides = Vec::new();
+        for entry in local {
+            let source = match embedded.get(entry.key.as_str()) {
+                Some((_, jar)) => jar.clone(),
+                None => local_jar(root, entry)?,
+            };
+            embedded.insert(entry.key.as_str(), (entry, source.clone()));
+            overrides.push(Override {
+                source,
+                path: entry.instance_path(),
+            });
+        }
+        overrides.extend(base.iter().cloned());
+        overrides.extend(config_files(
+            &root.join("overrides").join(variant).join("config"),
+        )?);
+        let file_stem = format!("{pack_slug}-{variant}-{}", request.version);
+
+        for platform in &platforms {
+            let blocked = ineligible(*platform, &mods)?;
+            if !blocked.is_empty() {
+                report.blocked.push(Blocked {
+                    variant: variant.to_owned(),
+                    platform: platform.name().to_owned(),
+                    mods: blocked,
+                });
+                continue;
+            }
+            let path = platform.build_pack(&PackBuild {
+                name: &name,
+                version: request.version,
+                pack: &manifest.pack,
+                entries: mods.clone(),
+                overrides: overrides.clone(),
+                out_dir: request.out_dir,
+                file_stem: &file_stem,
+            })?;
+            report.artifacts.push(Artifact {
+                variant: variant.to_owned(),
+                platform: platform.name().to_owned(),
+                path,
+            });
+        }
+    }
+    // `local_jar` checked each file against the manifest's hash: the approval
+    // holds when it matches that hash.
+    report.local = embedded
+        .values()
+        .map(|(entry, _)| LocalEntry {
+            key: entry.key.clone(),
+            path: entry.path.clone(),
+            approved: entry.is_approved(),
+        })
+        .collect();
+    report.warnings = local_warnings(&report.local, &platforms);
+    Ok(report)
+}
+
+/// The file of a local entry, checked against the manifest: a pack never
+/// embeds a file other than the one the manifest, and its approval, describe.
+fn local_jar(root: &Path, entry: &Entry) -> Result<PathBuf> {
+    let jar = file_path(root, entry)?;
+    if !jar.is_file() {
+        return Err(Error::usage(
+            format!(
+                "the file of the local {} `{}`, {}, is missing",
+                entry.noun(),
+                entry.key,
+                entry.path
+            ),
+            format!("restore it with `git checkout -- {}`", entry.path),
+        ));
+    }
+    let hashes = hash_file(&jar).context(format!("reading {}", jar.display()))?;
+    if hashes.sha512 != entry.hashes.sha512 {
+        return Err(Error::usage(
+            format!(
+                "{} changed since {} was generated",
+                entry.path,
+                manifest::FILE_NAME
+            ),
+            format!(
+                "run `modpack manifest`, then `modpack approve {}` once the new file is reviewed",
+                entry.key
+            ),
+        ));
+    }
+    Ok(jar)
+}
+
+/// One warning per local entry embedded, then one per platform that has
+/// something to say about embedded files.
+fn local_warnings(local: &[LocalEntry], platforms: &[&dyn PackPlatform]) -> Vec<String> {
+    if local.is_empty() {
+        return Vec::new();
+    }
+    let mut warnings: Vec<String> = local
+        .iter()
+        .map(|m| match m.approved {
+            true => format!(
+                "`{}` ({}) is local, embedded in the packs; approved",
+                m.key, m.path
+            ),
+            false => format!("{}; the publish workflow refuses it until then", m.todo()),
+        })
+        .collect();
+    let keys: Vec<&str> = local.iter().map(|m| m.key.as_str()).collect();
+    for platform in platforms {
+        if let Some(note) = platform.embedded_jar_note() {
+            warnings.push(format!("{} ({}): {note}", platform.name(), keys.join(", ")));
+        }
+    }
+    warnings
+}
+
+/// The platform named on the command line, or every one that builds packs by
+/// code.
+fn platforms<'r>(registry: &'r Registry, only: Option<&str>) -> Result<Vec<&'r dyn PackPlatform>> {
+    let builds = |p: &dyn PackPlatform| p.capability(Operation::BuildPack) == Capability::Api;
+    match only {
+        Some(name) => {
+            let platform = registry.get(name)?;
+            if !builds(platform) {
+                return Err(unsupported(name, Operation::BuildPack));
+            }
+            Ok(vec![platform])
+        }
+        None => Ok(registry.all().filter(|p| builds(*p)).collect()),
+    }
+}
+
+/// The entries the platform cannot pack, with the reason.
+fn ineligible(platform: &dyn PackPlatform, mods: &[&Entry]) -> Result<Vec<BlockedMod>> {
+    let mut blocked = Vec::new();
+    for entry in mods {
+        let reason = match platform.pack_eligibility(entry)? {
+            Eligibility::Blocked { reason } => reason,
+            Eligibility::Eligible => continue,
+        };
+        blocked.push(BlockedMod {
+            key: entry.key.clone(),
+            reason,
+        });
+    }
+    Ok(blocked)
+}
+
+/// Every file under `dir`, as overrides under `config/`, sorted by path.
+/// `.gitkeep` files only keep empty directories in git and are left out. A
+/// missing `dir` gives nothing.
+fn config_files(dir: &Path) -> Result<Vec<Override>> {
+    let mut files = Vec::new();
+    if dir.is_dir() {
+        walk(dir, "config", &mut files)?;
+    }
+    Ok(files)
+}
+
+fn walk(dir: &Path, prefix: &str, out: &mut Vec<Override>) -> Result<()> {
+    let reading = || format!("reading {}", dir.display());
+    let mut entries = fs::read_dir(dir)
+        .context(reading())?
+        .collect::<std::io::Result<Vec<_>>>()
+        .context(reading())?;
+    entries.sort_by_key(fs::DirEntry::file_name);
+    for entry in entries {
+        let source = entry.path();
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            return Err(Error::usage(
+                format!("{} has a name that is not valid UTF-8", source.display()),
+                "rename it",
+            ));
+        };
+        let path = format!("{prefix}/{file_name}");
+        if source.is_dir() {
+            walk(&source, &path, out)?;
+        } else if file_name != ".gitkeep" {
+            out.push(Override { source, path });
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;

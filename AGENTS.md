@@ -1,28 +1,30 @@
 # modpack-cli
 
-Rust CLI of the Minecraft modpack socle: one crate, `modpack-cli`, building one binary, `modpack`.
+Rust CLIs of the Minecraft socles, in one Cargo workspace: the shared library `mc-core` (`crates/mc-core/`) and the binary crate `modpack` (`crates/modpack/`).
 The design lives in `payangar-studio/environment`, branch `design`, files 00-cadrage.md and 01-socle-modpack.md under docs/design; it is the source of truth for behaviour.
 
 ## Layout
 
-- `src/main.rs`: entry point. Parses the command line, sets up logs, builds the context, calls `cli::run`, maps errors to exit codes.
-- `src/lib.rs`: module registry, one `pub mod` line per module.
-- `src/cli/mod.rs`: the clap command tree and the dispatch to handlers.
-- `src/cli/<command>.rs`: one file per command (`variant load` is `src/cli/variant_load.rs`), holding its `Args` and its `run(args, ctx)` handler.
-- `src/prompt.rs`: "ask, or read the argument". Every value a command needs goes through it, so that every command can run without a terminal.
-- `src/error.rs`: error model. Every error says what happened and what to do. Exit codes: 0 success, 1 internal error, 2 usage error (missing argument), 3 blocked (drift or file edited by hand, overridable with `--force`; also a failed `modpack test` condition or a platform `modpack pack` cannot build for).
-- `src/context.rs`: context passed to handlers (repository root found by walking up to `.modpack/`, prompt, verbosity).
-- `src/socle/`: what `modpack init` lays down and `modpack update` rewrites, the block markers, and the socle version check that `Context::require_root` runs for every command working in a repository.
-- `src/conditions/`: the checks behind `modpack test`. Static ones read the manifest; `server-starts` installs the loader's server once into the machine cache (`<cache dir>/modpack/servers`), then starts it with the variant's jars and config until `Done`.
-- `templates/`: templates embedded in the binary. `socle/`: files the socle owns, at their path in the pack repository, rewritten by `update`. `blocks/`: blocks between markers in `AGENTS.md` and `.gitignore`. `project/`: the pack skeleton, written once by `init`. Adding a file to `socle/` or `project/` needs no code change; each issue adds its templates under its own path.
-- `tests/`: integration tests of the binary; `tests/fixtures/`: their fixtures.
+`crates/mc-core/` holds what every binary shares: errors, prompts, secrets, platforms, socle mechanics, mod resolution, page model, dedicated server. It names no project type (`crates/mc-core/tests/independence.rs` checks it).
+
+- `crates/modpack/src/main.rs`: entry point. Parses the command line, sets up logs, builds the context, calls `cli::run`, maps errors to exit codes.
+- `crates/modpack/src/lib.rs`: module registry, one `pub mod` line per module.
+- `crates/modpack/src/cli/mod.rs`: the clap command tree and the dispatch to handlers.
+- `crates/modpack/src/cli/<command>.rs`: one file per command (`variant load` is `crates/modpack/src/cli/variant_load.rs`), holding its `Args` and its `run(args, ctx)` handler.
+- `crates/mc-core/src/prompt.rs`: "ask, or read the argument". Every value a command needs goes through it, so that every command can run without a terminal.
+- `crates/mc-core/src/error.rs`: error model. Every error says what happened and what to do. Exit codes: 0 success, 1 internal error, 2 usage error (missing argument), 3 blocked (drift or file edited by hand, overridable with `--force`; also a failed `modpack test` condition or a platform `modpack pack` cannot build for).
+- `crates/modpack/src/context.rs`: context passed to handlers (repository root found by walking up to `.modpack/`, prompt, verbosity).
+- `crates/modpack/src/socle/`: the modpack socle (`SOCLE`: directory, templates, markers) over the mechanics of `crates/mc-core/src/socle/`, and the socle version check that `Context::require_root` runs for every command working in a repository.
+- `crates/modpack/src/conditions/`: the checks behind `modpack test`. Static ones read the manifest; `server-starts` installs the loader's server once into the machine cache (`<cache dir>/modpack/servers`) through `crates/mc-core/src/server/`, then starts it with the variant's jars and config until `Done`.
+- `crates/modpack/templates/`: templates the binary embeds. `socle/`: files the socle owns, at their path in the pack, rewritten by `update`. `blocks/`: blocks between markers in `AGENTS.md` and `.gitignore`. `project/`: the pack skeleton, written once by `init`. Adding a file to `socle/` or `project/` needs no code change; each issue adds its templates under its own path.
+- `crates/modpack/tests/`: integration tests of the binary; `crates/modpack/tests/fixtures/`: their fixtures.
 
 ## Who edits what
 
-Each issue owns its command handler (`src/cli/<command>.rs`, including its `Args`) and the modules it creates.
+Each issue owns its command handler (`crates/modpack/src/cli/<command>.rs`, including its `Args`) and the modules it creates.
 
-- `src/main.rs`, `src/cli/mod.rs`, `src/prompt.rs`, `src/error.rs` and `src/context.rs` only change through an issue dedicated to them.
-- `src/lib.rs` and `Cargo.toml` are append-only: add a module line or a dependency, never change the others. Merge conflicts on them are resolved by keeping both sides.
+- `crates/modpack/src/main.rs`, `crates/modpack/src/cli/mod.rs`, `crates/modpack/src/context.rs`, and `crates/mc-core/src/prompt.rs` and `crates/mc-core/src/error.rs`, only change through an issue dedicated to them.
+- `crates/mc-core/src/lib.rs`, `crates/modpack/src/lib.rs` and every `Cargo.toml` are append-only: add a module line or a dependency, never change the others. Merge conflicts on them are resolved by keeping both sides.
 
 ## Conventions
 
@@ -34,10 +36,10 @@ Each issue owns its command handler (`src/cli/<command>.rs`, including its `Args
 ## Tests
 
 - Unit tests live in each module (`#[cfg(test)] mod tests`).
-- Integration tests of the CLI live in `tests/` and drive the binary with `assert_cmd`. Fixtures go in `tests/fixtures/`.
-- A test writes an executable file with `write_executable` (`tests/common/mod.rs`, included with `#[path]` from `src/`); `scripts/check-test-executables.sh` enforces it in CI.
+- Integration tests of a binary live in `crates/<crate>/tests/` and drive it with `assert_cmd`. Fixtures go in `crates/<crate>/tests/fixtures/`.
+- A test writes an executable file with `write_executable` (`crates/modpack/tests/common/mod.rs`, included with `#[path]` from `src/`); `scripts/check-test-executables.sh` enforces it in CI.
 - No network call in default tests. A test that needs the network is `#[ignore]` and run explicitly (`cargo test -- --ignored`); a CurseForge one also skips itself when `CURSEFORGE_API_KEY` is not set.
-- Locally, run only the tests of the code you touched (`cargo test <filter>`), plus `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings`. The full suite runs in CI on every push and pull request.
+- Locally, run only the tests of the code you touched (`cargo test <filter>`), plus `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D warnings`. The full suite runs in CI on every push and pull request.
 - End-to-end validation of a feature runs on the private pack `payangar-studio/test-pack` (usual clone `~/dev/minecraft/test-pack`, Modrinth instance "Test Pack"). Its Modrinth project `sqs4OHOo` (`modpack-cli-test-pack`, a draft never submitted for review) is the publication target of tests.
 
 ## Release

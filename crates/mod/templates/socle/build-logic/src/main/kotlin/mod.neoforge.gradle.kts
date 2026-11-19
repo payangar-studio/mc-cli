@@ -20,10 +20,22 @@ extensions.configure<BasePluginExtension> {
     archivesName.set("${mod.id}-neoforge")
 }
 
+// common's source sets are read below, once it is configured.
+if (hasCommon) {
+    evaluationDependsOn(":common")
+}
+
 extensions.configure<NeoForgeExtension> {
     setVersion(pinned.neoforge)
     mods.register(mod.id) {
         sourceSet(sourceSets["main"])
+        // common's classes, on the runtime classpath below, belong to the mod
+        // in dev runs too, so that they load with the game.
+        if (hasCommon) {
+            val common = project(":common").the<SourceSetContainer>()
+            sourceSet(common["main"])
+            sourceSet(common["client"])
+        }
     }
 }
 

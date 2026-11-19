@@ -68,8 +68,9 @@ data class ModToml(
             val declared: TomlArray? = toml.getArray("dependencies")
             val dependencies = declared?.let { array ->
                 (0 until array.size()).map { index ->
-                    val table = array.getTable(index)
                     val context = "$where, dependencies[$index]"
+                    val table = array.get(index) as? TomlTable
+                        ?: throw GradleException("$context: must be a table, written as a [[dependencies]] section")
                     ModDependency(
                         id = string(table, "id", context),
                         type = oneOf(string(table, "type", context), DEPENDENCY_TYPES, "$context, type"),

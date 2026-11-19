@@ -2,4 +2,6 @@ build/
 .gradle/
 .kotlin/
 runs/
+# Default game directory of the loaders' dev runs, one per subproject.
+/*/run/
 .source/

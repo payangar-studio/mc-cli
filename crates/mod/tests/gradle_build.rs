@@ -13,6 +13,11 @@ const PACKAGE_DIR: &str = "com/payangar/swiftblades";
 
 /// A project made by `mod init` in `<tmp>/mod`.
 fn init(loaders: &str, side: &str) -> (tempfile::TempDir, PathBuf) {
+    init_named(loaders, side, "Swift Blades")
+}
+
+/// `init`, with the mod named `name`.
+fn init_named(loaders: &str, side: &str, name: &str) -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
     Command::cargo_bin("mod")
         .unwrap()
@@ -22,11 +27,11 @@ fn init(loaders: &str, side: &str) -> (tempfile::TempDir, PathBuf) {
             "init",
             "mod",
             "--id=swift_blades",
-            "--name=Swift Blades",
             "--package=com.payangar.swiftblades",
             "--license=MIT",
             "--mc-version=26.3",
         ])
+        .arg(format!("--name={name}"))
         .arg(format!("--loaders={loaders}"))
         .arg(format!("--side={side}"))
         .assert()
@@ -222,4 +227,41 @@ fn a_client_class_compiles_only_in_the_client_source_set() {
     ));
     fs::write(&client, fixture).unwrap();
     gradle_ok(&root, &[":common:compileClientJava"]);
+}
+
+/// Every control character of the name is escaped in neoforge.mods.toml,
+/// DEL included, which TOML forbids in a basic string.
+#[test]
+#[ignore = "downloads Gradle and NeoForge"]
+fn control_characters_of_the_name_are_escaped() {
+    let name = "Swift\u{7f}Blades\u{1}";
+    let (_tmp, root) = init_named("neoforge", "both-required", name);
+    gradle_ok(&root, &[":neoforge:generateModMetadata"]);
+    let text = fs::read_to_string(
+        root.join("neoforge/build/generated/modMetadata/META-INF/neoforge.mods.toml"),
+    )
+    .unwrap();
+    let toml: toml::Table = toml::from_str(&text).unwrap();
+    assert_eq!(toml["mods"][0]["displayName"].as_str(), Some(name));
+}
+
+/// A `[[dependencies]]` written as something else than a table is reported
+/// with its place in mod.toml, not with a parser's stack trace.
+#[test]
+#[ignore = "downloads Gradle and the Gradle plugins"]
+fn a_malformed_dependency_is_named() {
+    let (_tmp, root) = init("neoforge", "both-required");
+    let text = fs::read_to_string(root.join("mod.toml")).unwrap();
+    fs::write(
+        root.join("mod.toml"),
+        format!("{text}dependencies = [\"sodium\"]\n"),
+    )
+    .unwrap();
+    let output = gradle(&root, &["help"]);
+    assert!(!output.status.success());
+    let log = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        log.contains("mod.toml, dependencies[0]: must be a table"),
+        "{log}"
+    );
 }

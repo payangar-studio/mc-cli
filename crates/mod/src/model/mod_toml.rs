@@ -166,7 +166,67 @@ pub fn check_id(id: &str) -> Result<()> {
     }
 }
 
-/// Checks a Java package: lowercase segments separated by dots.
+/// Words Java reserves, which no package segment can be: the keywords, the
+/// literals, and `_`.
+const JAVA_RESERVED: &[&str] = &[
+    "_",
+    "abstract",
+    "assert",
+    "boolean",
+    "break",
+    "byte",
+    "case",
+    "catch",
+    "char",
+    "class",
+    "const",
+    "continue",
+    "default",
+    "do",
+    "double",
+    "else",
+    "enum",
+    "extends",
+    "false",
+    "final",
+    "finally",
+    "float",
+    "for",
+    "goto",
+    "if",
+    "implements",
+    "import",
+    "instanceof",
+    "int",
+    "interface",
+    "long",
+    "native",
+    "new",
+    "null",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "return",
+    "short",
+    "static",
+    "strictfp",
+    "super",
+    "switch",
+    "synchronized",
+    "this",
+    "throw",
+    "throws",
+    "transient",
+    "true",
+    "try",
+    "void",
+    "volatile",
+    "while",
+];
+
+/// Checks a Java package: lowercase segments separated by dots, none of them
+/// a word Java reserves.
 pub fn check_package(package: &str) -> Result<()> {
     let segment = |s: &str| {
         let mut chars = s.chars();
@@ -174,13 +234,14 @@ pub fn check_package(package: &str) -> Result<()> {
             .next()
             .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
             && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            && !JAVA_RESERVED.contains(&s)
     };
     if package.split('.').all(segment) {
         Ok(())
     } else {
         Err(Error::usage(
             format!("`{package}` is not a valid Java package"),
-            "pass --package with lowercase segments separated by dots, such as `com.payangar.swiftblades`",
+            "pass --package with lowercase segments separated by dots, none of them a Java keyword, such as `com.payangar.swiftblades`",
         ))
     }
 }
@@ -243,7 +304,17 @@ mod tests {
     #[test]
     fn packages_are_lowercase_segments() {
         check_package("com.payangar.swiftblades").unwrap();
-        for package in ["", "com.", "Com.x", "com.1x", "com..x"] {
+        check_package("com.payangar._x.var").unwrap();
+        for package in [
+            "",
+            "com.",
+            "Com.x",
+            "com.1x",
+            "com..x",
+            "com.payangar.native",
+            "com._",
+            "true.x",
+        ] {
             assert!(check_package(package).is_err(), "{package}");
         }
     }

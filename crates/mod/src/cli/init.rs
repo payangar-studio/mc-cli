@@ -42,6 +42,9 @@ pub struct Args {
     /// Minecraft version, which also names the git branch
     #[arg(long)]
     pub mc_version: Option<String>,
+    /// Overwrite the existing files the socle owns (Gradle wrapper and settings, build-logic/)
+    #[arg(long)]
+    pub force: bool,
 }
 
 pub fn run(args: Args, ctx: &Context) -> Result<()> {
@@ -49,7 +52,9 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
     if let Some(other) = Project::at(&dir).filter(|p| p.kind != ProjectType::Mod) {
         return Err(other.wrong_type(ProjectType::Mod.binary()));
     }
-    if dir.join(SOCLE_DIR).exists() {
+    // The marker, not the directory: an init stopped before writing the
+    // marker left `.mod/` without it, and resumes here.
+    if Project::at(&dir).is_some() {
         return Err(Error::usage(
             format!("{} already holds a mod socle", dir.display()),
             format!(
@@ -58,16 +63,43 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
             ),
         ));
     }
+    let socle_dir = dir.join(SOCLE_DIR);
+    if socle_dir.exists() && !socle_dir.is_dir() {
+        return Err(Error::usage(
+            format!("{} exists and is not a directory", socle_dir.display()),
+            "move it away, or pick another directory",
+        ));
+    }
+    let overwritten = crate::socle::overwritten(&dir)?;
+    if !overwritten.is_empty() {
+        let list: String = overwritten.iter().map(|p| format!("\n  - {p}")).collect();
+        if !args.force {
+            return Err(Error::blocked(
+                format!(
+                    "files the socle owns already exist in {}:{list}",
+                    dir.display()
+                ),
+                "move your changes out of these files, then rerun `mod init --force` to overwrite them",
+            ));
+        }
+        tracing::warn!("overwriting files the socle owns:{list}");
+    }
 
     let p = &ctx.prompt;
     let id = p.text(args.id, "--id", "Mod id")?;
     check_id(&id)?;
     let name = p.text(args.name, "--name", "Mod name")?;
+    not_blank(&name, "--name", "the mod's display name")?;
     let package = match args.package {
         Some(package) => package,
         None => {
-            let base =
-                MachineIdentity::new().resolve(p, None, IdentityField::Package, "--package")?;
+            let base = MachineIdentity::new().resolve_checked(
+                p,
+                None,
+                IdentityField::Package,
+                "--package",
+                check_package,
+            )?;
             default_package(&base, &id)
         }
     };
@@ -86,6 +118,7 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
     let loaders: Vec<String> = LOADER_SETS.iter().map(|s| s.to_string()).collect();
     let loaders = parse_loaders(&p.select(args.loaders, "--loaders", "Loaders", &loaders)?)?;
     let license = p.text(args.license, "--license", "License (SPDX id)")?;
+    not_blank(&license, "--license", "an SPDX id such as `MIT`")?;
     let supported: Vec<String> = versions::SUPPORTED
         .iter()
         .map(|v| v.minecraft.to_owned())
@@ -125,6 +158,17 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
     Ok(())
 }
 
+/// Refuses an empty value of `arg`, which the build would refuse later.
+fn not_blank(value: &str, arg: &str, what: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(Error::usage(
+            format!("{arg} is empty"),
+            format!("pass {arg} with {what}"),
+        ));
+    }
+    Ok(())
+}
+
 /// `fabric,neoforge` as loaders, each once, in a stable order.
 fn parse_loaders(value: &str) -> Result<Vec<Loader>> {
     let mut loaders = Vec::new();
@@ -159,11 +203,13 @@ fn default_dependencies(loaders: &[Loader]) -> Vec<Dependency> {
     }]
 }
 
-/// Makes `dir` a git repository on a branch named after the Minecraft version,
-/// unless it already is one. Never commits.
+/// Makes `dir` a git repository on a branch named after the Minecraft version.
+/// An existing repository without commits gets its branch renamed; one with
+/// commits keeps its branch, with a warning when it is not the version's.
+/// Never commits.
 fn git_init(dir: &Path, minecraft: &str) -> Result<()> {
     if dir.join(".git").exists() {
-        return Ok(());
+        return name_branch(dir, minecraft);
     }
     let hint = format!(
         "install git, or run `git init --initial-branch={minecraft}` in {} yourself, then rerun `mod init`",
@@ -185,6 +231,37 @@ fn git_init(dir: &Path, minecraft: &str) -> Result<()> {
             hint,
         ));
     }
+    Ok(())
+}
+
+/// The branch of the existing repository `dir`, set to `minecraft` when it
+/// has no commits yet. A git failure here only warns: the mod does not need
+/// the branch name to build.
+fn name_branch(dir: &Path, minecraft: &str) -> Result<()> {
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+    };
+    let Some(branch) = git(&["branch", "--show-current"]) else {
+        tracing::warn!("could not read the git branch; the mod's branch should be `{minecraft}`");
+        return Ok(());
+    };
+    if branch == minecraft {
+        return Ok(());
+    }
+    let has_commits = git(&["rev-parse", "--verify", "--quiet", "HEAD"]).is_some();
+    let target = format!("refs/heads/{minecraft}");
+    if !has_commits && git(&["symbolic-ref", "HEAD", &target]).is_some() {
+        return Ok(());
+    }
+    tracing::warn!(
+        "the repository is on branch `{branch}`: a mod lives on a branch named after its Minecraft version, run `git branch -m {minecraft}` if this is the {minecraft} branch"
+    );
     Ok(())
 }
 

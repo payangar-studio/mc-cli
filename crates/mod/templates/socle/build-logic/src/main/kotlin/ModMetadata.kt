@@ -90,6 +90,7 @@ object ModMetadata {
         }
     }
 
-    // TOML basic strings take the same escapes as JSON ones.
-    private fun escapeToml(value: String): String = escapeJson(value)
+    // TOML basic strings take the same escapes as JSON ones, and DEL.
+    private fun escapeToml(value: String): String =
+        escapeJson(value).replace("\u007f", "\\u007f")
 }

@@ -23,6 +23,12 @@ extensions.configure<LoomGradleExtensionAPI> {
     mods.register(mod.id) {
         sourceSet(sourceSets["main"])
         sourceSet(sourceSets["client"])
+        // common's classes, on the runtime classpath below, belong to the mod
+        // in dev runs too.
+        if (hasCommon) {
+            sourceSet("main", project(":common"))
+            sourceSet("client", project(":common"))
+        }
     }
 }
 

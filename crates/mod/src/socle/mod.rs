@@ -65,6 +65,28 @@ pub fn check_version(root: &Path) -> Result<()> {
     SOCLE.check_version::<Versions>(root)
 }
 
+/// Socle files that already exist in `root` with other contents: those `init`
+/// would overwrite.
+pub fn overwritten(root: &Path) -> Result<Vec<String>> {
+    let mut paths = Vec::new();
+    for template in SOCLE.socle_files() {
+        let path = template
+            .path
+            .split('/')
+            .fold(root.to_path_buf(), |p, c| p.join(c));
+        if path.symlink_metadata().is_err() {
+            continue;
+        }
+        let same = path.is_file()
+            && std::fs::read(&path).context(format!("reading {}", path.display()))?
+                == template.contents;
+        if !same {
+            paths.push(template.path);
+        }
+    }
+    Ok(paths)
+}
+
 /// Creates a mod repository in `root`, which must not hold `.mod/` yet: the
 /// mod's skeleton (`mod.toml` first), then the socle files and blocks, the
 /// registry, and the socle settings with the pinned `versions`.

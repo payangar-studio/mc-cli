@@ -26,14 +26,14 @@ pub struct File {
 
 /// Every file of the skeleton of `module`.
 pub fn files(module: &ModToml) -> Vec<File> {
-    let fill = |template: &str| {
-        template
-            .replace("{{package}}", &module.package)
-            .replace("{{id}}", &module.id)
-            .replace("{{name}}", &module.name)
-            .replace("{{name_toml}}", &toml_escape(&module.name))
-            .replace("{{license_toml}}", &toml_escape(&module.license))
-    };
+    let values = [
+        ("package", module.package.clone()),
+        ("id", module.id.clone()),
+        ("name", module.name.clone()),
+        ("name_toml", toml_escape(&module.name)),
+        ("license_toml", toml_escape(&module.license)),
+    ];
+    let fill = |template: &str| fill(template, &values);
     let package = module.package.replace('.', "/");
     let both = module.loaders.len() > 1;
     let shared = if both {
@@ -50,14 +50,17 @@ pub fn files(module: &ModToml) -> Vec<File> {
         "client"
     };
 
-    let mut out = Vec::new();
+    // mod.toml is written as serialized, never filled: it holds the values.
+    let mut out = vec![File {
+        path: "mod.toml".into(),
+        contents: module.to_toml(),
+    }];
     let mut add = |path: String, template: &str| {
         out.push(File {
             path,
             contents: fill(template),
         })
     };
-    add("mod.toml".into(), &module.to_toml());
     add(
         "page/page.toml".into(),
         include_str!("../../templates/skeleton/page.toml"),
@@ -122,6 +125,36 @@ pub fn files(module: &ModToml) -> Vec<File> {
             );
         }
     }
+    out
+}
+
+/// `template` with each `{{key}}` of `values` replaced, in one pass: a value
+/// that holds `{{...}}` is written as it is. Unknown placeholders are kept.
+fn fill(template: &str, values: &[(&str, String)]) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        let value = after.find("}}").and_then(|end| {
+            let key = &after[..end];
+            values
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| (v, end + 2))
+        });
+        match value {
+            Some((value, len)) => {
+                out.push_str(value);
+                rest = &after[len..];
+            }
+            None => {
+                out.push_str("{{");
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
     out
 }
 
@@ -243,5 +276,20 @@ mod tests {
         let page: toml::Table = toml::from_str(&page.contents).unwrap();
         assert_eq!(page["name"].as_str(), Some("Swift \"Blades\""));
         assert_eq!(page["modrinth"]["license"].as_str(), Some("MIT"));
+    }
+
+    #[test]
+    fn values_are_never_read_as_placeholders() {
+        let mut module = module(&[Loader::Fabric], Side::Client);
+        module.name = "Tools {{package}} {{id}}".into();
+        module.license = "{{name}}".into();
+        let files = files(&module);
+        let file = |path: &str| &files.iter().find(|f| f.path == path).unwrap().contents;
+        let toml: ModToml = toml::from_str(file("mod.toml")).unwrap();
+        assert_eq!(toml.name, module.name);
+        assert_eq!(toml.license, module.license);
+        assert_eq!(file("page/description.md"), "# Tools {{package}} {{id}}\n");
+        let page: toml::Table = toml::from_str(file("page/page.toml")).unwrap();
+        assert_eq!(page["modrinth"]["license"].as_str(), Some("{{name}}"));
     }
 }

@@ -161,6 +161,8 @@ fn init_refuses_bad_values() {
         ("--side=everywhere", "unknown side"),
         ("--loaders=forge", "unknown loader"),
         ("--mc-version=1.21.1", "not supported"),
+        ("--name=", "pass --name"),
+        ("--license= ", "pass --license"),
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let name = bad.split('=').next().unwrap();
@@ -185,6 +187,117 @@ fn init_refuses_an_existing_socle() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("already holds a mod socle"));
+}
+
+/// An init that stopped before writing the socle settings left `.mod/` without
+/// its marker: the directory is not a mod repository yet, and init resumes.
+#[test]
+fn init_resumes_after_an_interrupted_init() {
+    let (_tmp, root) = init_repo();
+    fs::remove_file(root.join(".mod/socle.toml")).unwrap();
+    bin(&root).arg("init").args(INIT_ARGS).assert().success();
+    assert!(root.join(".mod/socle.toml").is_file());
+}
+
+#[test]
+fn init_refuses_to_overwrite_existing_build_files_unless_forced() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("swift-blades");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("gradle.properties"), "mod_version=1.4.2\n").unwrap();
+    fs::write(root.join("settings.gradle.kts"), "// mine\n").unwrap();
+    let mine = |root: &Path| {
+        (
+            fs::read_to_string(root.join("gradle.properties")).unwrap(),
+            fs::read_to_string(root.join("settings.gradle.kts")).unwrap(),
+        )
+    };
+    let before = mine(&root);
+
+    bin(tmp.path())
+        .arg("init")
+        .arg("swift-blades")
+        .args(INIT_ARGS)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("gradle.properties"))
+        .stderr(predicate::str::contains("settings.gradle.kts"))
+        .stderr(predicate::str::contains("--force"));
+    assert_eq!(mine(&root), before);
+    assert!(!root.join(".mod").exists());
+    assert!(!root.join("mod.toml").exists());
+
+    bin(tmp.path())
+        .arg("init")
+        .arg("swift-blades")
+        .args(INIT_ARGS)
+        .arg("--force")
+        .assert()
+        .success();
+    let lock = SocleLock::load(&SOCLE, &root).unwrap();
+    assert!(SOCLE.edited_by_hand(&root, &lock).unwrap().is_empty());
+}
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    let output = Process::new("git")
+        .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}: {output:?}");
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+#[test]
+fn git_ignores_the_dev_runs_but_not_a_run_package() {
+    let (_tmp, root) = init_repo();
+    let ignored = |path: &str| {
+        Process::new("git")
+            .args(["check-ignore", "--quiet", "--no-index", path])
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success()
+    };
+    for path in [
+        "fabric/run/options.txt",
+        "neoforge/run/logs/latest.log",
+        "runs/sodium/options.txt",
+    ] {
+        assert!(ignored(path), "{path} is not ignored");
+    }
+    assert!(!ignored("common/src/main/java/com/x/run/Run.java"));
+}
+
+#[test]
+fn init_names_the_branch_of_an_empty_repository() {
+    let tmp = tempfile::tempdir().unwrap();
+    git(tmp.path(), &["init", "--quiet", "--initial-branch=main"]);
+    bin(tmp.path())
+        .arg("init")
+        .args(INIT_ARGS)
+        .assert()
+        .success();
+    assert_eq!(git(tmp.path(), &["branch", "--show-current"]), "26.3");
+}
+
+#[test]
+fn init_warns_when_the_branch_is_not_the_minecraft_version() {
+    let tmp = tempfile::tempdir().unwrap();
+    git(tmp.path(), &["init", "--quiet", "--initial-branch=main"]);
+    git(
+        tmp.path(),
+        &["commit", "--quiet", "--allow-empty", "-m", "start"],
+    );
+    bin(tmp.path())
+        .arg("init")
+        .args(INIT_ARGS)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("`main`"))
+        .stderr(predicate::str::contains("26.3"));
+    assert_eq!(git(tmp.path(), &["branch", "--show-current"]), "main");
 }
 
 #[test]

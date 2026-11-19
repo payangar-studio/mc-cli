@@ -327,6 +327,11 @@ impl Socle {
         let new = self.write_socle(root)?;
         let removed = self.remove_stale(root, &old, &new)?;
         new.save(self, root)?;
+        // A socle that writes `AGENTS.md` for the first time links it as
+        // `init` does; a link deleted afterwards stays deleted.
+        if old.files.iter().all(|f| f.path != AGENTS_MD) {
+            link_claude_md(root)?;
+        }
         let from = std::mem::replace(&mut config.version, cli.to_string());
         config.save(self, root)?;
 
@@ -520,6 +525,51 @@ mod tests {
             fs::read_link(dir.path().join(CLAUDE_MD)).unwrap(),
             Path::new(AGENTS_MD)
         );
+    }
+
+    /// A socle that had no `AGENTS.md` block gets one in a later version: the
+    /// update that writes it links `CLAUDE.md`, as `init` would have. Later
+    /// updates leave a deleted link deleted.
+    #[cfg(unix)]
+    #[test]
+    fn update_links_claude_md_when_agents_md_arrives() {
+        use include_dir::{DirEntry, File};
+        type Init = std::collections::BTreeMap<String, String>;
+        static AGENTS: Dir<'static> = Dir::new(
+            "",
+            &[DirEntry::File(File::new(
+                "agents.md",
+                b"Read the design.\n",
+            ))],
+        );
+        let with_agents = |version| Socle {
+            version,
+            blocks: &AGENTS,
+            block_targets: &[(
+                "agents.md",
+                AGENTS_MD,
+                Markers {
+                    begin: "<!-- test:begin -->",
+                    end: "<!-- test:end -->",
+                },
+            )],
+            ..TEST
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join(CLAUDE_MD);
+        TEST.init(dir.path(), Init::new()).unwrap();
+        assert!(link.symlink_metadata().is_err());
+
+        with_agents("0.4.0")
+            .update::<Init>(dir.path(), false)
+            .unwrap();
+        assert_eq!(fs::read_link(&link).unwrap(), Path::new(AGENTS_MD));
+
+        fs::remove_file(&link).unwrap();
+        with_agents("0.5.0")
+            .update::<Init>(dir.path(), false)
+            .unwrap();
+        assert!(link.symlink_metadata().is_err());
     }
 
     #[cfg(unix)]

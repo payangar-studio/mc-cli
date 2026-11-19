@@ -3,8 +3,9 @@
 //!
 //! - `templates/socle/`: files the socle owns, written at the same relative
 //!   path, recorded in the registry and rewritten by every update: the Gradle
-//!   wrapper, the root settings, `build-logic/`, which holds the whole build
-//!   and fills the loader metadata from `mod.toml`, and the harness: the
+//!   wrapper, the root settings, `build-logic/`, which holds the whole build,
+//!   fills the loader metadata from `mod.toml` and configures the publication,
+//!   the publish workflow, the git hooks (`.mod/hooks/`) and the harness: the
 //!   `editing-agents-md` skill, its check under `.mod/scripts/` and its
 //!   workflow;
 //! - `templates/blocks/`: blocks between markers in a file the mod owns
@@ -111,7 +112,51 @@ pub fn init(root: &Path, module: &ModToml, versions: Versions) -> Result<()> {
         }
         std::fs::write(&path, file.contents).context(format!("writing {}", path.display()))?;
     }
-    SOCLE.init(root, versions)
+    SOCLE.init(root, versions)?;
+    enable_hooks(root);
+    Ok(())
+}
+
+/// Value of `core.hooksPath`: the socle's git hooks (`.mod/hooks/`).
+pub const HOOKS_PATH: &str = ".mod/hooks";
+
+/// Points `core.hooksPath` of the repository at the socle's hooks, unless it
+/// already points elsewhere. Only warns on failure: the CI checks again what
+/// the hooks check.
+fn enable_hooks(root: &Path) {
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+    };
+    let current = git(&[
+        "config",
+        "--local",
+        "--default",
+        "",
+        "--get",
+        "core.hooksPath",
+    ]);
+    match current.as_deref() {
+        Some("") => {
+            if git(&["config", "--local", "core.hooksPath", HOOKS_PATH]).is_none() {
+                tracing::warn!(
+                    "could not enable the socle's git hooks; run `git config core.hooksPath {HOOKS_PATH}`"
+                );
+            }
+        }
+        Some(HOOKS_PATH) => {}
+        Some(other) => tracing::warn!(
+            "core.hooksPath is `{other}`: the socle's hooks in {HOOKS_PATH} do not run, run them from your own hooks"
+        ),
+        None => tracing::warn!(
+            "could not read core.hooksPath; run `git config core.hooksPath {HOOKS_PATH}` to enable the socle's git hooks"
+        ),
+    }
 }
 
 #[cfg(test)]

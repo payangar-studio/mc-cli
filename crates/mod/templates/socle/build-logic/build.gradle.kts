@@ -32,4 +32,5 @@ dependencies {
     implementation("org.tomlj:tomlj:2.2.0")
     implementation("net.fabricmc.fabric-loom:net.fabricmc.fabric-loom.gradle.plugin:${pinned("loom")}")
     implementation("net.neoforged.moddev:net.neoforged.moddev.gradle.plugin:${pinned("moddevgradle")}")
+    implementation("me.modmuss50.mod-publish-plugin:me.modmuss50.mod-publish-plugin.gradle.plugin:${pinned("mod-publish-plugin")}")
 }

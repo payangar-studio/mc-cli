@@ -52,6 +52,9 @@ fn gradle(root: &Path, args: &[&str]) -> Output {
     let output = Process::new(root.join("gradlew"))
         .args(["--console=plain", "--stacktrace"])
         .args(args)
+        // A test never publishes, whatever the machine's environment holds.
+        .env_remove("MC_MODRINTH_TOKEN")
+        .env_remove("MC_CURSEFORGE_UPLOAD_TOKEN")
         .current_dir(root)
         .output()
         .unwrap();
@@ -387,4 +390,183 @@ fn library_tests_pass_in_a_neoforge_only_mod() {
     gradle_ok(&root, &["build"]);
     assert!(jar(&root, "neoforge").is_file());
     assert_library_tests_passed(&root, "neoforge", COMMON_LIBRARY_TESTS);
+}
+
+/// What a dry run of `publishMods` would send to `platform` for `loader`.
+fn dry_run(root: &Path, loader: &str, platform: &str) -> Option<serde_json::Value> {
+    let path = root.join(format!(
+        "{loader}/build/publishMods/{platform}.dry-run.json"
+    ));
+    let text = fs::read_to_string(path).ok()?;
+    Some(serde_json::from_str(&text).unwrap())
+}
+
+/// The dependencies of a dry run, as `slug:TYPE`.
+fn dependencies(description: &serde_json::Value) -> Vec<String> {
+    description["dependencies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| {
+            format!(
+                "{}:{}",
+                d["slug"].as_str().unwrap(),
+                d["type"].as_str().unwrap()
+            )
+        })
+        .collect()
+}
+
+fn write_page(root: &Path, modrinth: &str, curseforge: &str) {
+    fs::write(
+        root.join("page/page.toml"),
+        format!(
+            "name = \"Swift Blades\"\n\n[modrinth]\nproject_id = \"{modrinth}\"\n\n[curseforge]\nproject_id = \"{curseforge}\"\n"
+        ),
+    )
+    .unwrap();
+}
+
+/// A dry run publishes one version per loader on each platform, numbered
+/// `<version>+<minecraft>-<loader>`, with the dependencies of mod.toml that
+/// name a project on that platform.
+#[test]
+#[ignore = "downloads Gradle, the loaders and Minecraft"]
+fn a_dry_run_describes_one_version_per_loader_and_platform() {
+    let (_tmp, root) = init("fabric,neoforge", "both-optional");
+    write_page(&root, "AbCd1234", "123456");
+    let text = fs::read_to_string(root.join("mod.toml")).unwrap();
+    fs::write(
+        root.join("mod.toml"),
+        format!(
+            "{text}
+[[dependencies]]
+id = \"sodium\"
+type = \"optional\"
+loaders = [\"fabric\"]
+modrinth = \"sodium\"
+curseforge = \"sodium\"
+
+[[dependencies]]
+id = \"jei\"
+type = \"required\"
+loaders = [\"neoforge\"]
+curseforge = \"jei\"
+
+[[dependencies]]
+id = \"oldmod\"
+type = \"incompatible\"
+modrinth = \"old-mod\"
+"
+        ),
+    )
+    .unwrap();
+    fs::write(root.join("changelogs/1.2.0-beta.1.md"), "- First beta.\n").unwrap();
+
+    gradle_ok(
+        &root,
+        &["publishMods", "-Pversion=1.2.0-beta.1", "-PdryRun=true"],
+    );
+
+    for (loader, modrinth_deps, curseforge_deps) in [
+        (
+            "fabric",
+            &[
+                "fabric-api:REQUIRED",
+                "sodium:OPTIONAL",
+                "old-mod:INCOMPATIBLE",
+            ][..],
+            &["fabric-api:REQUIRED", "sodium:OPTIONAL"][..],
+        ),
+        (
+            "neoforge",
+            &["old-mod:INCOMPATIBLE"][..],
+            &["jei:REQUIRED"][..],
+        ),
+    ] {
+        // The plugin's own dry run result is there too.
+        assert!(
+            root.join(format!("{loader}/build/publishMods/publishModrinth.json"))
+                .is_file()
+        );
+        for (platform, project, deps) in [
+            ("modrinth", "AbCd1234", modrinth_deps),
+            ("curseforge", "123456", curseforge_deps),
+        ] {
+            let d = dry_run(&root, loader, platform)
+                .unwrap_or_else(|| panic!("no dry run of {loader} on {platform}"));
+            let number = format!("1.2.0-beta.1+26.3-{loader}");
+            assert_eq!(d["version"], number.as_str(), "{loader} {platform}");
+            assert_eq!(d["displayName"], format!("Swift Blades {number}").as_str());
+            assert_eq!(d["projectId"], project);
+            assert_eq!(d["type"], "BETA");
+            assert_eq!(d["loaders"], serde_json::json!([loader]));
+            assert_eq!(d["gameVersions"], serde_json::json!(["26.3"]));
+            assert_eq!(d["changelog"], "- First beta.\n");
+            assert_eq!(
+                d["file"],
+                format!("swift_blades-{loader}-1.2.0-beta.1.jar").as_str()
+            );
+            assert_eq!(dependencies(&d), deps, "{loader} {platform}");
+        }
+        let modrinth = dry_run(&root, loader, "modrinth").unwrap();
+        assert_eq!(modrinth["environment"], "SERVER_ONLY_CLIENT_OPTIONAL");
+        let curseforge = dry_run(&root, loader, "curseforge").unwrap();
+        assert_eq!(curseforge["client"], true);
+        assert_eq!(curseforge["server"], true);
+    }
+}
+
+/// A platform without a project id in page/page.toml is not declared, with a
+/// warning; the release type follows the version.
+#[test]
+#[ignore = "downloads Gradle, Fabric and Minecraft"]
+fn a_platform_without_id_is_skipped_with_a_warning() {
+    let (_tmp, root) = init("fabric", "client");
+    write_page(&root, "AbCd1234", "");
+    for (version, kind) in [("1.0.0", "STABLE"), ("1.1.0-alpha.2", "ALPHA")] {
+        fs::write(root.join(format!("changelogs/{version}.md")), "Notes.\n").unwrap();
+        let output = gradle(
+            &root,
+            &[
+                "publishMods",
+                &format!("-Pversion={version}"),
+                "-PdryRun=true",
+            ],
+        );
+        assert!(output.status.success());
+        let log = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            log.contains(
+                "fabric: CurseForge skipped, page/page.toml has no [curseforge] project_id"
+            ),
+            "{log}"
+        );
+        assert!(!log.contains("Modrinth skipped"), "{log}");
+        let modrinth = dry_run(&root, "fabric", "modrinth").unwrap();
+        assert_eq!(modrinth["type"], kind, "{version}");
+        assert_eq!(modrinth["environment"], "CLIENT_ONLY");
+        assert!(dry_run(&root, "fabric", "curseforge").is_none());
+        assert!(
+            !root
+                .join("fabric/build/publishMods/publishCurseforge.json")
+                .exists()
+        );
+    }
+}
+
+/// Publishing for real needs the version's notes: a missing changelog stops
+/// the build before anything is sent.
+#[test]
+#[ignore = "downloads Gradle, Fabric and Minecraft"]
+fn publishing_without_changelog_fails() {
+    let (_tmp, root) = init("fabric", "client");
+    write_page(&root, "AbCd1234", "");
+    let output = gradle(&root, &["publishMods", "-Pversion=2.0.0"]);
+    assert!(!output.status.success());
+    let log = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        log.contains("changelogs/2.0.0.md is missing or empty"),
+        "{log}"
+    );
 }

@@ -1,0 +1,36 @@
+#!/bin/sh
+# Managed by mc-cli; `mod update` rewrites this file.
+# Before a push that carries release tags (v<version>, or v<version>+<minecraft>):
+# - refuses a tag whose commit has no changelogs/<version>.md, which the
+#   publication requires;
+# - refuses more than one such tag at once: GitHub starts no workflow for a
+#   push of more than three tags, so a batch of tags would publish nothing.
+# The publish workflow checks the changelog again: this hook only says it sooner.
+
+count=0
+status=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$remote_ref" in
+        refs/tags/v*) ;;
+        *) continue ;;
+    esac
+    # A deletion pushes an all-zero object id.
+    case "$local_sha" in
+        *[!0]*) ;;
+        *) continue ;;
+    esac
+    count=$((count + 1))
+    tag=${remote_ref#refs/tags/}
+    version=${tag#v}
+    version=${version%%+*}
+    size=$(git cat-file -s "$local_sha:changelogs/$version.md" 2>/dev/null)
+    if [ "${size:-0}" -eq 0 ]; then
+        echo "mc-cli: tag $tag has no changelogs/$version.md in its commit; write the notes of $version there, commit them, move the tag onto that commit (git tag -f $tag), then push it again." >&2
+        status=1
+    fi
+done
+if [ "$count" -gt 1 ]; then
+    echo "mc-cli: $count release tags in one push; push them one at a time (git push origin <tag>): GitHub starts no workflow for a push of more than three tags." >&2
+    status=1
+fi
+exit "$status"

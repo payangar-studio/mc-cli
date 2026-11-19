@@ -170,6 +170,11 @@ fn changes<'a>(from: &'a Versions, to: &'a Versions) -> Vec<(&'static str, &'a s
         ("neoforge", &from.neoforge, &to.neoforge),
         ("moddevgradle", &from.moddevgradle, &to.moddevgradle),
         ("modmenu", &from.modmenu, &to.modmenu),
+        (
+            "mod-publish-plugin",
+            &from.mod_publish_plugin,
+            &to.mod_publish_plugin,
+        ),
     ]
     .into_iter()
     .filter(|(_, a, b)| a != b)
@@ -230,6 +235,7 @@ mod tests {
             neoforge: "26.4.0.7",
             moddevgradle: "2.0.150",
             modmenu: "21.1.0",
+            mod_publish_plugin: "2.2.1",
         },
         Pinned {
             minecraft: "26.3",
@@ -239,6 +245,7 @@ mod tests {
             neoforge: "26.3.0.113",
             moddevgradle: "2.0.148",
             modmenu: "21.0.1",
+            mod_publish_plugin: "2.2.1",
         },
     ];
 

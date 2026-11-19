@@ -189,29 +189,49 @@ impl MachineIdentity {
         field: IdentityField,
         arg: &str,
     ) -> Result<String> {
-        self.resolve_with(prompt.is_interactive(), value, field, arg, |path| {
-            let value = prompt.text(None, arg, field.question())?;
-            let Some(path) = path else {
-                return Ok((value, false));
-            };
-            let question = format!(
-                "Save it in {} as the default of the next projects?",
-                path.display()
-            );
-            let save = prompt.confirm(None, arg, &question, true)?;
-            Ok((value, save))
-        })
+        self.resolve_checked(prompt, value, field, arg, |_| Ok(()))
     }
 
-    /// `resolve`, with `ask` standing for the terminal: given the file, if
-    /// any, it returns the answer and whether to save it there.
+    /// `resolve`, with an answer typed in the terminal going through `check`
+    /// before the offer to save it, so that a wrong value never lands in the
+    /// file.
+    pub fn resolve_checked(
+        &mut self,
+        prompt: &Prompt,
+        value: Option<String>,
+        field: IdentityField,
+        arg: &str,
+        check: impl Fn(&str) -> Result<()>,
+    ) -> Result<String> {
+        self.resolve_with(
+            prompt.is_interactive(),
+            value,
+            field,
+            arg,
+            check,
+            || prompt.text(None, arg, field.question()),
+            |path| {
+                let question = format!(
+                    "Save it in {} as the default of the next projects?",
+                    path.display()
+                );
+                prompt.confirm(None, arg, &question, true)
+            },
+        )
+    }
+
+    /// `resolve`, with `ask` and `ask_save` standing for the terminal: the
+    /// answer, then, given the file, whether to save it there.
+    #[allow(clippy::too_many_arguments)]
     fn resolve_with(
         &mut self,
         interactive: bool,
         value: Option<String>,
         field: IdentityField,
         arg: &str,
-        ask: impl FnOnce(Option<&Path>) -> Result<(String, bool)>,
+        check: impl Fn(&str) -> Result<()>,
+        ask: impl FnOnce() -> Result<String>,
+        ask_save: impl FnOnce(&Path) -> Result<bool>,
     ) -> Result<String> {
         if let Some(value) = value {
             return Ok(value);
@@ -232,7 +252,12 @@ impl MachineIdentity {
                 None => Error::missing_value(arg),
             });
         }
-        let (value, keep) = ask(self.path.as_deref())?;
+        let value = ask()?;
+        check(&value)?;
+        let keep = match &self.path {
+            Some(path) => ask_save(path)?,
+            None => false,
+        };
         if let (true, Some(path)) = (keep, &self.path) {
             // Saving is a convenience: failing it must not lose the answer.
             match save(path, field, &value) {
@@ -320,6 +345,46 @@ mod tests {
         }
     }
 
+    /// A value typed in the terminal is checked before the offer to save it:
+    /// a wrong one would otherwise come back, without asking, on every init.
+    #[test]
+    fn an_answer_failing_the_check_is_not_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("minecraft/config.toml");
+        let mut machine = MachineIdentity::at(path.clone());
+        let err = machine
+            .resolve_with(
+                true,
+                None,
+                IdentityField::Package,
+                "--package",
+                |value| match value {
+                    "Com.Payangar" => Err(Error::usage("invalid package", "fix it")),
+                    _ => Ok(()),
+                },
+                || Ok("Com.Payangar".to_owned()),
+                |_| panic!("the offer to save comes after the check"),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("invalid package"), "{err}");
+        assert!(!path.exists());
+
+        let value = machine.resolve_with(
+            true,
+            None,
+            IdentityField::Package,
+            "--package",
+            |_| Ok(()),
+            || Ok("com.payangar".to_owned()),
+            |_| Ok(true),
+        );
+        assert_eq!(value.unwrap(), "com.payangar");
+        assert_eq!(
+            Identity::load(&path).unwrap().get(IdentityField::Package),
+            Some("com.payangar")
+        );
+    }
+
     #[test]
     fn missing_file_is_no_identity() {
         let dir = tempfile::tempdir().unwrap();
@@ -405,9 +470,15 @@ mod tests {
         // A regular file where the directory should be: the save cannot write.
         std::fs::write(dir.path().join("minecraft"), "").unwrap();
         let mut machine = MachineIdentity::at(dir.path().join("minecraft/config.toml"));
-        let value = machine.resolve_with(true, None, IdentityField::Author, "--author", |_| {
-            Ok(("Asked".into(), true))
-        });
+        let value = machine.resolve_with(
+            true,
+            None,
+            IdentityField::Author,
+            "--author",
+            |_| Ok(()),
+            || Ok("Asked".into()),
+            |_| Ok(true),
+        );
         assert_eq!(value.unwrap(), "Asked");
     }
 
@@ -418,17 +489,28 @@ mod tests {
             identity: None,
         };
         let err = machine
-            .resolve_with(false, None, IdentityField::Author, "--author", |_| {
-                panic!("asked without a terminal")
-            })
+            .resolve_with(
+                false,
+                None,
+                IdentityField::Author,
+                "--author",
+                |_| Ok(()),
+                || panic!("asked without a terminal"),
+                |_| panic!("asked without a terminal"),
+            )
             .unwrap_err();
         assert_eq!(err.kind(), ErrorKind::Usage);
         assert_eq!(err.hint(), "pass --author");
 
-        let value = machine.resolve_with(true, None, IdentityField::Author, "--author", |path| {
-            assert_eq!(path, None, "no file to offer saving into");
-            Ok(("Asked".into(), true))
-        });
+        let value = machine.resolve_with(
+            true,
+            None,
+            IdentityField::Author,
+            "--author",
+            |_| Ok(()),
+            || Ok("Asked".into()),
+            |_| panic!("no file to offer saving into"),
+        );
         assert_eq!(value.unwrap(), "Asked");
     }
 

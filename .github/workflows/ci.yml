@@ -35,7 +35,7 @@ jobs:
       - name: Check that every action is pinned by commit SHA
         run: |
           bash scripts/check-workflow-pins.sh
-          bash scripts/check-workflow-pins.sh crates/*/templates/socle/.github/workflows/*.yml
+          bash scripts/check-workflow-pins.sh crates/mod/templates/socle/.github/workflows/*.yml
       - name: Test that check
         run: bash scripts/test-check-workflow-pins.sh
       # A pinned release, checked against its published checksum. The runner's

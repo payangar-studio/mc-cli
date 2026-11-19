@@ -32,3 +32,4 @@ tempfile.workspace = true
 mockito.workspace = true
 yaml-rust2.workspace = true
 zip.workspace = true
+mc-core = { workspace = true, features = ["fake"] }

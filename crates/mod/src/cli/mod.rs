@@ -11,6 +11,7 @@ use crate::error::Result;
 pub mod init;
 pub mod port;
 pub mod setup;
+pub mod test;
 pub mod update;
 
 /// CLI of the Minecraft mod socle.
@@ -50,6 +51,8 @@ pub enum Command {
     Setup(setup::Args),
     /// Port the mod to another Minecraft version, on a new branch named after it
     Port(port::Args),
+    /// Run the side matrix: a dedicated server and a client with different mod sets
+    Test(test::Args),
 }
 
 pub fn run(command: Command, ctx: &Context) -> Result<()> {
@@ -58,6 +61,7 @@ pub fn run(command: Command, ctx: &Context) -> Result<()> {
         Command::Update(args) => update::run(args, ctx),
         Command::Setup(args) => setup::run(args, ctx),
         Command::Port(args) => port::run(args, ctx),
+        Command::Test(args) => test::run(args, ctx),
     }
 }
 

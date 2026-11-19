@@ -6,14 +6,20 @@
 //! never carry a keyring error as is: some of them hold the raw value.
 
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 
 use keyring_core::{CredentialStore, Error as KeyringError};
+use tracing::warn;
 
 use crate::error::{Error, Result};
 
 /// Keyring service every secret is stored under; the account is the secret's name.
-pub const KEYRING_SERVICE: &str = "modpack-cli";
+pub const KEYRING_SERVICE: &str = "minecraft";
+
+/// Keyring service of the secrets stored by `modpack-cli` before the rename. A
+/// secret still there is moved under [`KEYRING_SERVICE`] the first time it is
+/// read.
+pub const OLD_KEYRING_SERVICE: &str = "modpack-cli";
 
 /// The secrets the CLI knows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -44,6 +50,16 @@ impl SecretName {
 
     /// The environment variable that overrides the keyring.
     pub fn env_var(self) -> &'static str {
+        match self {
+            SecretName::ModrinthToken => "MC_MODRINTH_TOKEN",
+            SecretName::CurseforgeUploadToken => "MC_CURSEFORGE_UPLOAD_TOKEN",
+            SecretName::CurseforgeApiKey => "MC_CURSEFORGE_API_KEY",
+        }
+    }
+
+    /// The variable `modpack-cli` read before the rename. It is no longer
+    /// read; a value still there is only pointed out.
+    fn old_env_var(self) -> &'static str {
         match self {
             SecretName::ModrinthToken => "MODPACK_MODRINTH_TOKEN",
             SecretName::CurseforgeUploadToken => "MODPACK_CURSEFORGE_UPLOAD_TOKEN",
@@ -156,7 +172,8 @@ impl Secrets {
     }
 
     /// Where the secret is found, without reading more than needed. The error
-    /// is a description safe to print.
+    /// is a description safe to print. Like every keyring read, it moves an
+    /// entry still under the old service name.
     pub fn locate(&self, name: SecretName) -> std::result::Result<Option<Source>, String> {
         if self.read_env(name).is_some() {
             return Ok(Some(Source::Environment));
@@ -165,6 +182,8 @@ impl Secrets {
     }
 
     /// Whether the keyring holds the secret, whatever the environment says.
+    /// Like every keyring read, it moves an entry still under the old service
+    /// name.
     pub fn in_keyring(&self, name: SecretName) -> Result<bool> {
         self.require_keyring(name)?;
         let value = self
@@ -181,14 +200,24 @@ impl Secrets {
             .map_err(|err| keyring_failure("storing", name, describe(&err)))
     }
 
-    /// Removes the secret from the keyring. Returns whether it was there.
+    /// Removes the secret from the keyring, under the old service name too, so
+    /// that no later read brings it back. The old entry goes first: when a
+    /// removal fails, the new entry is still there, and no read can move the
+    /// old one in place of a removed new one. Returns whether it was there.
     pub fn remove(&self, name: SecretName) -> Result<bool> {
         let store = self.require_keyring(name)?;
-        match entry(store, name).and_then(|entry| entry.delete_credential()) {
-            Ok(()) => Ok(true),
-            Err(KeyringError::NoEntry) => Ok(false),
-            Err(err) => Err(keyring_failure("removing", name, describe(&err))),
+        let mut removed = false;
+        for service in [OLD_KEYRING_SERVICE, KEYRING_SERVICE] {
+            match store
+                .build(service, name.as_str(), None)
+                .and_then(|entry| entry.delete_credential())
+            {
+                Ok(()) => removed = true,
+                Err(KeyringError::NoEntry) => {}
+                Err(err) => return Err(keyring_failure("removing", name, describe(&err))),
+            }
         }
+        Ok(removed)
     }
 
     /// The keyring, or an error saying to use the environment instead.
@@ -204,36 +233,62 @@ impl Secrets {
         })
     }
 
-    fn read_env(&self, name: SecretName) -> Option<String> {
-        (self.env)(name.env_var()).filter(|value| !value.is_empty())
+    /// A notice when the variable is unset but the one it was renamed from
+    /// is set: that value is not read, so the secret would look missing.
+    fn renamed_variable(&self, name: SecretName) -> Option<String> {
+        let set = |var| (self.env)(var).is_some_and(|value: String| !value.is_empty());
+        (!set(name.env_var()) && set(name.old_env_var())).then(|| {
+            format!(
+                "{} is set but no longer read: rename it to {}",
+                name.old_env_var(),
+                name.env_var()
+            )
+        })
     }
 
-    /// The keyring value, `None` when absent or when there is no keyring.
+    fn read_env(&self, name: SecretName) -> Option<String> {
+        let value = (self.env)(name.env_var()).filter(|value| !value.is_empty());
+        if value.is_none()
+            && let Some(notice) = self.renamed_variable(name)
+        {
+            // Once per secret and process: parallel downloads read it each.
+            static SAID: [Once; 3] = [Once::new(), Once::new(), Once::new()];
+            SAID[name as usize].call_once(|| warn!("{notice}"));
+        }
+        value
+    }
+
+    /// The keyring value, `None` when absent or when there is no keyring. A
+    /// value found only under the old service name is moved first.
     fn read_keyring(&self, name: SecretName) -> std::result::Result<Option<String>, String> {
         let Ok(store) = &self.keyring else {
             return Ok(None);
         };
         match entry(store, name).and_then(|entry| entry.get_password()) {
             Ok(value) => Ok(Some(value)),
-            Err(KeyringError::NoEntry) => Ok(None),
+            Err(KeyringError::NoEntry) => migrate(store, name),
             Err(err) => Err(describe(&err)),
         }
     }
 
     fn not_found(&self, name: SecretName, bin: &str) -> Error {
         let var = name.env_var();
+        let renamed = self
+            .renamed_variable(name)
+            .map(|notice| format!(" ({notice})"))
+            .unwrap_or_default();
         match &self.keyring {
             Ok(_) => Error::usage(
                 format!(
                     "secret `{name}` not found: {var} is not set and the system keyring has no `{name}`"
                 ),
-                format!("run `{bin} auth {name}`, or set {var}"),
+                format!("run `{bin} auth {name}`, or set {var}{renamed}"),
             ),
             Err(why) => Error::usage(
                 format!(
                     "secret `{name}` not found: {var} is not set and the system keyring is unavailable ({why})"
                 ),
-                format!("set {var} in the environment"),
+                format!("set {var} in the environment{renamed}"),
             ),
         }
     }
@@ -244,6 +299,47 @@ fn entry(
     name: SecretName,
 ) -> keyring_core::Result<keyring_core::Entry> {
     store.build(KEYRING_SERVICE, name.as_str(), None)
+}
+
+/// Moves the secret from the old service name to the new one, once: the old
+/// entry is removed. A failed write keeps the old entry and still returns the
+/// value, so that the next read tries again. With no old entry either, the new
+/// one is read again: another reader may have moved it in the meantime.
+fn migrate(
+    store: &Arc<CredentialStore>,
+    name: SecretName,
+) -> std::result::Result<Option<String>, String> {
+    let old = store
+        .build(OLD_KEYRING_SERVICE, name.as_str(), None)
+        .map_err(|err| describe(&err))?;
+    let value = match old.get_password() {
+        Ok(value) => value,
+        Err(KeyringError::NoEntry) => {
+            return match entry(store, name).and_then(|entry| entry.get_password()) {
+                Ok(value) => Ok(Some(value)),
+                Err(KeyringError::NoEntry) => Ok(None),
+                Err(err) => Err(describe(&err)),
+            };
+        }
+        Err(err) => return Err(describe(&err)),
+    };
+    if let Err(err) = entry(store, name).and_then(|entry| entry.set_password(&value)) {
+        warn!(
+            "secret `{name}` is still under the old keyring service `{OLD_KEYRING_SERVICE}`: moving it to `{KEYRING_SERVICE}` failed: {}",
+            describe(&err)
+        );
+        return Ok(Some(value));
+    }
+    match old.delete_credential() {
+        Ok(()) | Err(KeyringError::NoEntry) => warn!(
+            "secret `{name}` moved in the system keyring from the service `{OLD_KEYRING_SERVICE}` to `{KEYRING_SERVICE}`"
+        ),
+        Err(err) => warn!(
+            "secret `{name}` copied in the system keyring from the service `{OLD_KEYRING_SERVICE}` to `{KEYRING_SERVICE}`, but removing the old entry failed: {}",
+            describe(&err)
+        ),
+    }
+    Ok(Some(value))
 }
 
 fn keyring_failure(action: &str, name: SecretName, why: String) -> Error {
@@ -337,9 +433,9 @@ mod tests {
         assert_eq!(
             pairs,
             [
-                ("modrinth-token", "MODPACK_MODRINTH_TOKEN"),
-                ("curseforge-upload-token", "MODPACK_CURSEFORGE_UPLOAD_TOKEN"),
-                ("curseforge-api-key", "MODPACK_CURSEFORGE_API_KEY"),
+                ("modrinth-token", "MC_MODRINTH_TOKEN"),
+                ("curseforge-upload-token", "MC_CURSEFORGE_UPLOAD_TOKEN"),
+                ("curseforge-api-key", "MC_CURSEFORGE_API_KEY"),
             ]
         );
         for name in SecretName::ALL {
@@ -390,9 +486,230 @@ mod tests {
         let name = SecretName::CurseforgeUploadToken;
         secrets.store(name, &Secret::new(VALUE)).unwrap();
         let raw = store
-            .build("modpack-cli", "curseforge-upload-token", None)
+            .build("minecraft", "curseforge-upload-token", None)
             .unwrap();
         assert_eq!(raw.get_password().unwrap(), VALUE);
+    }
+
+    /// The raw entry of `name` under the old service name.
+    fn old_entry(store: &Arc<CredentialStore>, name: SecretName) -> keyring_core::Entry {
+        store.build("modpack-cli", name.as_str(), None).unwrap()
+    }
+
+    #[test]
+    fn an_old_entry_is_moved_once_and_removed() {
+        let store = mock_store();
+        let name = SecretName::ModrinthToken;
+        old_entry(&store, name).set_password(VALUE).unwrap();
+        let secrets = secrets(&[], Some(store.clone()));
+
+        let (secret, source) = secrets.find(name).unwrap().unwrap();
+        assert_eq!((secret.expose(), source), (VALUE, Source::Keyring));
+        let new = store.build("minecraft", name.as_str(), None).unwrap();
+        assert_eq!(new.get_password().unwrap(), VALUE);
+        assert!(matches!(
+            old_entry(&store, name).get_password(),
+            Err(KeyringError::NoEntry)
+        ));
+
+        // Moved once: the next reads find the new entry only.
+        old_entry(&store, name).set_password("stale").unwrap();
+        assert_eq!(secrets.get(name, "modpack").unwrap().expose(), VALUE);
+        assert_eq!(old_entry(&store, name).get_password().unwrap(), "stale");
+    }
+
+    #[test]
+    fn a_new_entry_is_read_without_touching_an_old_one() {
+        let store = mock_store();
+        let name = SecretName::CurseforgeApiKey;
+        entry(&store, name).unwrap().set_password(VALUE).unwrap();
+        old_entry(&store, name).set_password("old").unwrap();
+        let secrets = secrets(&[], Some(store.clone()));
+        assert_eq!(secrets.get(name, "modpack").unwrap().expose(), VALUE);
+        assert_eq!(old_entry(&store, name).get_password().unwrap(), "old");
+    }
+
+    #[test]
+    fn the_environment_wins_over_an_old_entry_without_moving_it() {
+        let store = mock_store();
+        let name = SecretName::CurseforgeUploadToken;
+        old_entry(&store, name).set_password("old").unwrap();
+        let secrets = secrets(&[(name.env_var(), VALUE)], Some(store.clone()));
+        let (secret, source) = secrets.find(name).unwrap().unwrap();
+        assert_eq!((secret.expose(), source), (VALUE, Source::Environment));
+        assert_eq!(old_entry(&store, name).get_password().unwrap(), "old");
+    }
+
+    #[test]
+    fn remove_also_removes_an_old_entry() {
+        let store = mock_store();
+        let name = SecretName::CurseforgeApiKey;
+        old_entry(&store, name).set_password(VALUE).unwrap();
+        let secrets = secrets(&[], Some(store.clone()));
+        assert!(secrets.remove(name).unwrap());
+        assert!(matches!(
+            old_entry(&store, name).get_password(),
+            Err(KeyringError::NoEntry)
+        ));
+        assert!(secrets.find(name).unwrap().is_none());
+    }
+
+    /// A store over `mock` whose entries under `service` are read normally
+    /// but refuse every write and delete, like a locked keyring collection.
+    struct WriteFails {
+        mock: Arc<CredentialStore>,
+        service: &'static str,
+    }
+
+    impl keyring_core::api::CredentialStoreApi for WriteFails {
+        fn vendor(&self) -> String {
+            "write-failing mock".to_string()
+        }
+
+        fn id(&self) -> String {
+            "write-failing mock".to_string()
+        }
+
+        fn build(
+            &self,
+            service: &str,
+            user: &str,
+            mods: Option<&HashMap<&str, &str>>,
+        ) -> keyring_core::Result<keyring_core::Entry> {
+            let entry = self.mock.build(service, user, mods)?;
+            if service != self.service {
+                return Ok(entry);
+            }
+            Ok(keyring_core::Entry::new_with_credential(Arc::new(
+                ReadOnly(entry),
+            )))
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    struct ReadOnly(keyring_core::Entry);
+
+    impl keyring_core::api::CredentialApi for ReadOnly {
+        fn set_secret(&self, _: &[u8]) -> keyring_core::Result<()> {
+            Err(KeyringError::NoStorageAccess("collection locked".into()))
+        }
+
+        fn get_secret(&self) -> keyring_core::Result<Vec<u8>> {
+            self.0.get_secret()
+        }
+
+        fn delete_credential(&self) -> keyring_core::Result<()> {
+            Err(KeyringError::NoStorageAccess("collection locked".into()))
+        }
+
+        fn get_credential(&self) -> keyring_core::Result<Option<Arc<keyring_core::Credential>>> {
+            Ok(None)
+        }
+
+        fn get_specifiers(&self) -> Option<(String, String)> {
+            self.0.get_specifiers()
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    fn write_fails(mock: &Arc<CredentialStore>, service: &'static str) -> Arc<CredentialStore> {
+        Arc::new(WriteFails {
+            mock: mock.clone(),
+            service,
+        })
+    }
+
+    #[test]
+    fn a_failed_move_still_returns_the_value_and_keeps_the_old_entry() {
+        let mock = mock_store();
+        let name = SecretName::ModrinthToken;
+        old_entry(&mock, name).set_password(VALUE).unwrap();
+        let secrets = secrets(&[], Some(write_fails(&mock, KEYRING_SERVICE)));
+
+        assert_eq!(secrets.get(name, "modpack").unwrap().expose(), VALUE);
+        assert_eq!(old_entry(&mock, name).get_password().unwrap(), VALUE);
+        assert!(matches!(
+            entry(&mock, name).unwrap().get_password(),
+            Err(KeyringError::NoEntry)
+        ));
+    }
+
+    #[test]
+    fn a_failed_removal_of_the_old_entry_still_returns_the_moved_value() {
+        let mock = mock_store();
+        let name = SecretName::CurseforgeApiKey;
+        old_entry(&mock, name).set_password(VALUE).unwrap();
+        let secrets = secrets(&[], Some(write_fails(&mock, OLD_KEYRING_SERVICE)));
+
+        assert_eq!(secrets.get(name, "modpack").unwrap().expose(), VALUE);
+        assert_eq!(entry(&mock, name).unwrap().get_password().unwrap(), VALUE);
+        assert_eq!(old_entry(&mock, name).get_password().unwrap(), VALUE);
+    }
+
+    #[test]
+    fn a_concurrent_move_is_not_taken_for_a_missing_secret() {
+        let store = mock_store();
+        let name = SecretName::CurseforgeApiKey;
+        // Another reader moved the secret between this reader's look at the
+        // new entry (absent then) and its look at the old one (gone now).
+        entry(&store, name).unwrap().set_password(VALUE).unwrap();
+        fail_next(&store, name, KeyringError::NoEntry);
+        let secrets = secrets(&[], Some(store));
+
+        let (secret, source) = secrets.find(name).unwrap().unwrap();
+        assert_eq!((secret.expose(), source), (VALUE, Source::Keyring));
+    }
+
+    #[test]
+    fn a_failed_removal_never_lets_the_old_entry_come_back() {
+        let mock = mock_store();
+        let name = SecretName::ModrinthToken;
+        entry(&mock, name).unwrap().set_password("new").unwrap();
+        old_entry(&mock, name).set_password("old").unwrap();
+        let secrets = secrets(&[], Some(write_fails(&mock, OLD_KEYRING_SERVICE)));
+
+        assert!(secrets.remove(name).is_err());
+        // Nothing was removed: the value in use is still the new one, and no
+        // later read moves the old one in its place.
+        assert_eq!(secrets.get(name, "modpack").unwrap().expose(), "new");
+        assert_eq!(entry(&mock, name).unwrap().get_password().unwrap(), "new");
+    }
+
+    #[test]
+    fn an_old_variable_still_set_is_named_without_being_read() {
+        let name = SecretName::ModrinthToken;
+        let old_only = secrets(&[("MODPACK_MODRINTH_TOKEN", VALUE)], Some(mock_store()));
+        assert!(old_only.find(name).unwrap().is_none());
+        assert_eq!(
+            old_only.renamed_variable(name).as_deref(),
+            Some(
+                "MODPACK_MODRINTH_TOKEN is set but no longer read: rename it to MC_MODRINTH_TOKEN"
+            )
+        );
+        let err = old_only.get(name, "modpack").unwrap_err();
+        assert!(
+            err.hint().ends_with(
+                "(MODPACK_MODRINTH_TOKEN is set but no longer read: rename it to MC_MODRINTH_TOKEN)"
+            ),
+            "{}",
+            err.hint()
+        );
+
+        let both = secrets(
+            &[
+                ("MODPACK_MODRINTH_TOKEN", "old"),
+                ("MC_MODRINTH_TOKEN", VALUE),
+            ],
+            None,
+        );
+        assert_eq!(both.renamed_variable(name), None);
+        assert_eq!(both.get(name, "modpack").unwrap().expose(), VALUE);
     }
 
     #[test]
@@ -406,7 +723,7 @@ mod tests {
         assert!(err.to_string().contains("modrinth-token"));
         assert_eq!(
             err.hint(),
-            "run `mod auth modrinth-token`, or set MODPACK_MODRINTH_TOKEN"
+            "run `mod auth modrinth-token`, or set MC_MODRINTH_TOKEN"
         );
     }
 
@@ -424,12 +741,9 @@ mod tests {
             err.to_string()
                 .contains("keyring is unavailable (no Secret Service)")
         );
-        assert_eq!(
-            err.hint(),
-            "set MODPACK_CURSEFORGE_API_KEY in the environment"
-        );
+        assert_eq!(err.hint(), "set MC_CURSEFORGE_API_KEY in the environment");
         let err = without.store(name, &Secret::new(VALUE)).unwrap_err();
-        assert!(err.hint().contains("MODPACK_CURSEFORGE_API_KEY"));
+        assert!(err.hint().contains("MC_CURSEFORGE_API_KEY"));
         assert!(without.remove(name).is_err());
     }
 

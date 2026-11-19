@@ -36,17 +36,17 @@ fn auth_without_terminal_refuses_and_points_to_the_environment() {
         .arg("auth")
         .assert()
         .code(2)
-        .stderr(predicate::str::contains("there is none").and(
-        predicate::str::contains(
-            "MODPACK_MODRINTH_TOKEN, MODPACK_CURSEFORGE_UPLOAD_TOKEN, MODPACK_CURSEFORGE_API_KEY",
-        ),
-    ));
+        .stderr(
+            predicate::str::contains("there is none").and(predicate::str::contains(
+                "MC_MODRINTH_TOKEN, MC_CURSEFORGE_UPLOAD_TOKEN, MC_CURSEFORGE_API_KEY",
+            )),
+        );
     modpack()
         .args(["auth", "curseforge-api-key"])
         .assert()
         .code(2)
         .stderr(predicate::str::contains(
-            "set MODPACK_CURSEFORGE_API_KEY in the environment",
+            "set MC_CURSEFORGE_API_KEY in the environment",
         ));
 }
 

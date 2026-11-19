@@ -272,7 +272,7 @@ fn offline_the_real_hook_commits_a_local_jar_and_its_entry() {
             cmd.env(var, "http://127.0.0.1:1");
         }
         cmd.env_remove("NO_PROXY").env_remove("no_proxy");
-        cmd.env("MODPACK_CURSEFORGE_API_KEY", "unused");
+        cmd.env("MC_CURSEFORGE_API_KEY", "unused");
     };
 
     repo.write("mods-local/custom-tweaks-0.3.jar", "local jar");

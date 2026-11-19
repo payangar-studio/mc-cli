@@ -22,7 +22,7 @@ The Modrinth App must be installed for `modpack setup` to create the pack's inst
 
 | Command | What it does |
 |---|---|
-| `modpack init [dir] --name --mc-version --loader --loader-version --author` | Creates a modpack repository: socle, layout, default variant. Asks for each value not given. |
+| `modpack init [dir] --name --mc-version --loader --loader-version --author` | Creates a modpack repository: socle, layout, default variant. Asks for each value not given. `--author` defaults to `author` under `[identity]` in the machine configuration, `<user config dir>/minecraft/config.toml`, shared by every binary; when asked for, it can be saved there. |
 | `modpack setup [--no-launch]` | Prepares a clone on this machine: enables the git hooks, downloads the jars, registers the instance in the Modrinth App (one click to confirm the import), loads the default variant. Safe to run again. |
 | `modpack update [--force]` | Brings the repository's socle to this CLI's version. Stops on socle files edited by hand, unless `--force`. |
 | `modpack add <mod> [--version] [--variant]... [--with-deps] [--url] [--force]` | Adds a mod or a resource pack from Modrinth or CurseForge (slug, id or URL) or from a local file (`.jar` for a mod, `.zip` for a resource pack), and updates the manifest, in every variant or only in the variants named: `--variant` repeats, `default` names the default variant, and `--variant default` alone keeps the mod in the default variant only. Asks for the version when several fit. On a mod already in the pack, `--with-deps` adds only its missing dependencies. An entry from a platform whose slug is the key of a local entry of the same type replaces it, and its file leaves git; it stops when that file is not committed, unless `--force`. |
@@ -48,11 +48,13 @@ The CLI reads each secret from its environment variable first, then from the sys
 
 | Secret | Variable | Needed by |
 |---|---|---|
-| Modrinth personal access token | `MODPACK_MODRINTH_TOKEN` | `modpack page push` |
-| CurseForge upload token | `MODPACK_CURSEFORGE_UPLOAD_TOKEN` | publication, in CI only |
-| CurseForge Core API key | `MODPACK_CURSEFORGE_API_KEY` | identifying and downloading the mods hosted on CurseForge |
+| Modrinth personal access token | `MC_MODRINTH_TOKEN` | `modpack page push` |
+| CurseForge upload token | `MC_CURSEFORGE_UPLOAD_TOKEN` | publication, in CI only |
+| CurseForge Core API key | `MC_CURSEFORGE_API_KEY` | identifying and downloading the mods hosted on CurseForge |
 
 Looking a jar up on Modrinth needs no secret. Run `modpack auth` in your own terminal: values are never passed as arguments nor shown.
+
+Keyring entries live under the service `minecraft`, one account per secret (`modrinth-token`, `curseforge-upload-token`, `curseforge-api-key`), so that every binary of this repository reads the same ones. An entry an older release stored under the service `modpack-cli` is moved to `minecraft` the first time it is read, with a warning on stderr (hidden by `-q`). The variables of older releases (`MODPACK_MODRINTH_TOKEN`, `MODPACK_CURSEFORGE_UPLOAD_TOKEN`, `MODPACK_CURSEFORGE_API_KEY`) are no longer read: one still set while its `MC_*` variable is not gets a warning, and a missing secret's error names it.
 
 ## Publication
 
@@ -72,7 +74,7 @@ What each pack repository needs, once:
 - repository variables (Settings, Secrets and variables, Actions, Variables): `INFISICAL_URL`, the vault's URL, and `INFISICAL_IDENTITY_ID`, the id of `ci-minecraft`. Neither is a secret; an organization variable does not reach a private repository on GitHub Free. `MODPACK_PUBLISH_VARIANTS` optionally lists the variants to publish, separated by spaces (all variants when unset);
 - the project ids in `page/page.toml`: `[modrinth] project_id`, written by `modpack page push`, and `[curseforge] project_id`, written by the `mc-curseforge-page` skill. A platform whose project id is empty is skipped, with a notice in the run summary, and the run publishes to the others; a platform with a project that refuses a pack still fails the run.
 
-The secrets live in the vault project `minecraft`, environment `prod`, folder `/app`, under the names of the variables the CLI reads: `MODPACK_MODRINTH_TOKEN` and `MODPACK_CURSEFORGE_UPLOAD_TOKEN`. Nothing goes into GitHub secrets.
+The secrets live in the vault project `minecraft`, environment `prod`, folder `/app`, under the names of the variables the CLI reads: `MC_MODRINTH_TOKEN` and `MC_CURSEFORGE_UPLOAD_TOKEN`. Nothing goes into GitHub secrets. Keep the keys `MODPACK_MODRINTH_TOKEN` and `MODPACK_CURSEFORGE_UPLOAD_TOKEN` next to them, unrenamed, until every pack repository has run `modpack update`: a pack whose socle still pins `publish-modpack.yml@v0.3.1` reads those.
 
 What gets published:
 

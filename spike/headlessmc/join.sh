@@ -27,6 +27,7 @@ fi
 echo eula=true >server/eula.txt
 cat >server/server.properties <<EOF
 online-mode=false
+white-list=false
 enforce-secure-profile=false
 server-port=$PORT
 level-type=minecraft\:flat
@@ -64,7 +65,8 @@ hmc/headlessmc launch -lwjgl --offline --no-backup \
   --game "--quickPlayMultiplayer localhost:$PORT" "$MC_VERSION" >client.log 2>&1 &
 HMC_PID=$!
 ts "client launching (headlessmc pid $HMC_PID)"
-timeout 600 bash -c 'until grep -q "joined the game" server/server.log; do sleep 1; done'
+timeout 600 bash -c 'until grep -q -E "joined the game|lost connection" server/server.log; do sleep 1; done'
+grep -q "joined the game" server/server.log || { ts "FAIL: $(grep -m1 'lost connection' server/server.log)"; exit 1; }
 ts "JOIN: $(grep -m1 'joined the game' server/server.log)"
 
 # 4. Stay N ticks, then check the player is still there.

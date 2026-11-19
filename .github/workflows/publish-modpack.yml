@@ -182,7 +182,7 @@ jobs:
             "$vault/api/v3/secrets/raw")
           # Named like the variables the CLI reads. A missing one only fails
           # the step that needs it.
-          for name in MODPACK_MODRINTH_TOKEN MODPACK_CURSEFORGE_UPLOAD_TOKEN; do
+          for name in MC_MODRINTH_TOKEN MC_CURSEFORGE_UPLOAD_TOKEN; do
             value=$(jq -r --arg name "$name" '.secrets[] | select(.secretKey == $name) | .secretValue' <<<"$secrets")
             if [[ -n "$value" ]]; then
               echo "::add-mask::$value"
@@ -296,8 +296,8 @@ jobs:
         if: ${{ !cancelled() && !inputs.dry-run && steps.pack.outcome == 'success' && contains(env.PUBLISH_PLATFORMS, 'modrinth') }}
         run: |
           project="$MODRINTH_PROJECT"
-          if [[ -z "${MODPACK_MODRINTH_TOKEN:-}" ]]; then
-            echo "::error::MODPACK_MODRINTH_TOKEN is missing from $VAULT_PROJECT:$VAULT_PATH in the vault."
+          if [[ -z "${MC_MODRINTH_TOKEN:-}" ]]; then
+            echo "::error::MC_MODRINTH_TOKEN is missing from $VAULT_PROJECT:$VAULT_PATH in the vault."
             exit 1
           fi
           failed=0
@@ -313,7 +313,7 @@ jobs:
               '{project_id: $project, name: $name, version_number: $number, changelog: $changelog,
                 version_type: $type, game_versions: [$mc], loaders: [$loader], dependencies: [],
                 featured: false, file_parts: ["file"], primary_file: "file"}' > "$data"
-            if curl -sS --fail-with-body -A "$USER_AGENT" -H "Authorization: $MODPACK_MODRINTH_TOKEN" \
+            if curl -sS --fail-with-body -A "$USER_AGENT" -H "Authorization: $MC_MODRINTH_TOKEN" \
                 -F "data=<$data;type=application/json" -F "file=@$path" \
                 https://api.modrinth.com/v2/version -o "$RUNNER_TEMP/modrinth-response.json"; then
               echo "Published $number to Modrinth (version $(jq -r .id "$RUNNER_TEMP/modrinth-response.json"))."
@@ -332,8 +332,8 @@ jobs:
         if: ${{ !cancelled() && !inputs.dry-run && steps.pack.outcome == 'success' && contains(env.PUBLISH_PLATFORMS, 'curseforge') }}
         run: |
           project="$CURSEFORGE_PROJECT"
-          if [[ -z "${MODPACK_CURSEFORGE_UPLOAD_TOKEN:-}" ]]; then
-            echo "::error::MODPACK_CURSEFORGE_UPLOAD_TOKEN is missing from $VAULT_PROJECT:$VAULT_PATH in the vault."
+          if [[ -z "${MC_CURSEFORGE_UPLOAD_TOKEN:-}" ]]; then
+            echo "::error::MC_CURSEFORGE_UPLOAD_TOKEN is missing from $VAULT_PROJECT:$VAULT_PATH in the vault."
             exit 1
           fi
           failed=0
@@ -344,7 +344,7 @@ jobs:
             metadata="$RUNNER_TEMP/curseforge-metadata.json"
             jq -n --arg name "$name" --rawfile changelog "$RUNNER_TEMP/changelog.md" --arg type "$RELEASE_TYPE" \
               '{displayName: $name, changelog: $changelog, changelogType: "markdown", releaseType: $type}' > "$metadata"
-            if curl -sS --fail-with-body -A "$USER_AGENT" -H "X-Api-Token: $MODPACK_CURSEFORGE_UPLOAD_TOKEN" \
+            if curl -sS --fail-with-body -A "$USER_AGENT" -H "X-Api-Token: $MC_CURSEFORGE_UPLOAD_TOKEN" \
                 -F "metadata=<$metadata;type=application/json" -F "file=@$path" \
                 "https://minecraft.curseforge.com/api/projects/$project/upload-file" \
                 -o "$RUNNER_TEMP/curseforge-response.json"; then

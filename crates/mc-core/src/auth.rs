@@ -153,21 +153,40 @@ mod tests {
         );
         assert!(
             err.hint()
-                .contains("set MODPACK_MODRINTH_TOKEN in the environment")
+                .contains("set MC_MODRINTH_TOKEN in the environment")
         );
     }
 
     #[test]
     fn status_tells_where_each_secret_is_without_its_value() {
-        let secrets = secrets(&[("MODPACK_MODRINTH_TOKEN", VALUE)], true);
+        let secrets = secrets(&[("MC_MODRINTH_TOKEN", VALUE)], true);
         secrets
             .store(SecretName::CurseforgeApiKey, &Secret::new(VALUE))
             .unwrap();
         assert_eq!(
             status(&secrets),
-            "modrinth-token: found in the environment (MODPACK_MODRINTH_TOKEN)\n\
+            "modrinth-token: found in the environment (MC_MODRINTH_TOKEN)\n\
              curseforge-upload-token: not found\n\
              curseforge-api-key: found in the system keyring\n"
+        );
+    }
+
+    #[test]
+    fn status_names_the_variables_the_secrets_come_from() {
+        let secrets = secrets(
+            &[
+                ("MC_MODRINTH_TOKEN", VALUE),
+                ("MC_CURSEFORGE_UPLOAD_TOKEN", VALUE),
+                ("MC_CURSEFORGE_API_KEY", VALUE),
+            ],
+            false,
+        );
+        assert_eq!(
+            status(&secrets),
+            "system keyring: unavailable (no Secret Service)\n\
+             modrinth-token: found in the environment (MC_MODRINTH_TOKEN)\n\
+             curseforge-upload-token: found in the environment (MC_CURSEFORGE_UPLOAD_TOKEN)\n\
+             curseforge-api-key: found in the environment (MC_CURSEFORGE_API_KEY)\n"
         );
     }
 
@@ -194,9 +213,9 @@ mod tests {
 
     #[test]
     fn save_warns_when_the_environment_overrides_the_keyring() {
-        let secrets = secrets(&[("MODPACK_MODRINTH_TOKEN", "other")], true);
+        let secrets = secrets(&[("MC_MODRINTH_TOKEN", "other")], true);
         let message = save(&secrets, SecretName::ModrinthToken, VALUE.into()).unwrap();
-        assert!(message.contains("MODPACK_MODRINTH_TOKEN is set and takes precedence"));
+        assert!(message.contains("MC_MODRINTH_TOKEN is set and takes precedence"));
     }
 
     #[test]

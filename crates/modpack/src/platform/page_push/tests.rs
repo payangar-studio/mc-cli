@@ -561,17 +561,17 @@ const PNG: &[u8] = &[
 ];
 
 /// Against the real API, on an existing test project the token can edit:
-/// `MODPACK_MODRINTH_TOKEN` and `MODPACK_TEST_MODRINTH_PROJECT` (its id).
+/// `MC_MODRINTH_TOKEN` and `MC_TEST_MODRINTH_PROJECT` (its id).
 /// Pushes a page with one gallery image, then the same page without it.
 /// Never creates a project, so that running it leaves nothing behind.
 #[test]
 #[ignore = "edits a real Modrinth test project; run by hand"]
 fn real_api_edits_a_test_project() {
     let (Ok(token), Ok(id)) = (
-        std::env::var("MODPACK_MODRINTH_TOKEN"),
-        std::env::var("MODPACK_TEST_MODRINTH_PROJECT"),
+        std::env::var("MC_MODRINTH_TOKEN"),
+        std::env::var("MC_TEST_MODRINTH_PROJECT"),
     ) else {
-        eprintln!("skipped: set MODPACK_MODRINTH_TOKEN and MODPACK_TEST_MODRINTH_PROJECT");
+        eprintln!("skipped: set MC_MODRINTH_TOKEN and MC_TEST_MODRINTH_PROJECT");
         return;
     };
     let toml = format!(

@@ -229,7 +229,7 @@ fn read<T: DeserializeOwned>(
         401 | 403 => {
             return Err(Error::usage(
                 format!("CurseForge refused the API key while {what}"),
-                "check the Core API key: store a valid one with `modpack auth`, or set MODPACK_CURSEFORGE_API_KEY",
+                "check the Core API key: store a valid one with `modpack auth`, or set MC_CURSEFORGE_API_KEY",
             ));
         }
         status => return Err(unexpected(what, status)),

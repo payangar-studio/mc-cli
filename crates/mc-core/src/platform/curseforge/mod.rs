@@ -30,7 +30,7 @@ pub const NAME: &str = "curseforge";
 
 const BASE_URL: &str = "https://api.curseforge.com";
 /// The environment variable of the Core API key.
-pub const KEY_VAR: &str = "MODPACK_CURSEFORGE_API_KEY";
+pub const KEY_VAR: &str = "MC_CURSEFORGE_API_KEY";
 
 /// The Core API key, if one is set: the environment, then the system keyring
 /// where `modpack auth` stores it.

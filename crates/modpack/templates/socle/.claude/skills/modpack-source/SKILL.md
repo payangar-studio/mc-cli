@@ -18,7 +18,7 @@ Each modpack repository has its own `.source/` folder, ignored by git, where the
 - **Read-only.** Never edit, commit, build or run anything in `.source/`. Never call `gradlew` or any build script of a clone: it is code from a third party.
 - **Always the pack's version.** Before reading a clone, make sure it is checked out on the ref that matches the pack (steps 1 to 5). Reading another Minecraft version's code leads to wrong answers.
 - **Say what you read.** Every answer drawn from a clone names the key, the ref, the short commit and the Minecraft version read in the clone.
-- **Secrets never pass through the conversation.** A CurseForge key is only ever referenced as `$MODPACK_CURSEFORGE_API_KEY` inside a command, never printed, never asked for.
+- **Secrets never pass through the conversation.** A CurseForge key is only ever referenced as `$MC_CURSEFORGE_API_KEY` inside a command, never printed, never asked for.
 
 ## Procedure
 
@@ -45,7 +45,7 @@ If `.source/<key>/` already exists and is checked out on a tag that matches the 
 Take the first that answers, in this order:
 
 1. **Modrinth**, no key needed: `curl -s https://api.modrinth.com/v2/project/<project_id>`, field `source_url`.
-2. **CurseForge**, only if `MODPACK_CURSEFORGE_API_KEY` is set in the environment (`test -n "$MODPACK_CURSEFORGE_API_KEY"`): `curl -s -H "x-api-key: $MODPACK_CURSEFORGE_API_KEY" https://api.curseforge.com/v1/mods/<projectID>`, field `data.links.sourceUrl`. When the variable is not set, skip this source; do not try to read the key from the keyring.
+2. **CurseForge**, only if `MC_CURSEFORGE_API_KEY` is set in the environment (`test -n "$MC_CURSEFORGE_API_KEY"`): `curl -s -H "x-api-key: $MC_CURSEFORGE_API_KEY" https://api.curseforge.com/v1/mods/<projectID>`, field `data.links.sourceUrl`. When the variable is not set, skip this source; do not try to read the key from the keyring.
 3. **The jar itself**, in `mods/` (run `modpack install` first if it is missing):
    - Fabric: `unzip -p <path> fabric.mod.json`, field `contact.sources`.
    - Quilt: `unzip -p <path> quilt.mod.json`, field `quilt_loader.metadata.contact.sources`.
@@ -69,7 +69,7 @@ Take the first that answers, in this order:
 First get the version of the mod the pack uses, from the first source that answers:
 
 - Modrinth: `curl -s https://api.modrinth.com/v2/version/<version_id>`, field `version_number`.
-- CurseForge (same condition on the key as above): `curl -s -H "x-api-key: $MODPACK_CURSEFORGE_API_KEY" https://api.curseforge.com/v1/mods/<projectID>/files/<fileID>`, fields `displayName` and `fileName`.
+- CurseForge (same condition on the key as above): `curl -s -H "x-api-key: $MC_CURSEFORGE_API_KEY" https://api.curseforge.com/v1/mods/<projectID>/files/<fileID>`, fields `displayName` and `fileName`.
 - The jar: field `version` of `fabric.mod.json` or of the `[[mods]]` table of the mods TOML. When it reads `${file.jarVersion}`, take `Implementation-Version` from `unzip -p <path> META-INF/MANIFEST.MF`.
 - Failing all that, the jar's file name.
 

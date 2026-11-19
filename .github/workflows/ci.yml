@@ -57,6 +57,8 @@ jobs:
   # the loader metadata for each side, the client split of `common`.
   mod-build:
     runs-on: ubuntu-latest
+    # The game servers of the generated mods' checks could hang.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
@@ -75,6 +77,8 @@ jobs:
   # the client job of the mod's workflow (templates/socle/.github/workflows).
   mod-tests:
     runs-on: ubuntu-24.04
+    # The game servers and clients it starts could hang.
+    timeout-minutes: 60
     env:
       SDL_OPENGL_FORCE_SRGB_FRAMEBUFFER: skip
     steps:

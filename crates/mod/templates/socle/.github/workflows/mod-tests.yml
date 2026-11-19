@@ -7,9 +7,10 @@
 #   NeoForge's client self-test, on a virtual display with software rendering
 #   (`./gradlew clientCheck`).
 # Every test task fails when it ran no test. The renders of the client
-# gametests are uploaded as the `screenshots` artifact: references come from
-# there (`./gradlew :fabric:promoteScreenshots -Pscreenshots=<dir>`), never
-# from a local GPU.
+# gametests are uploaded as the `screenshots` artifact (dev client) and the
+# `production-screenshots` one. References come from `screenshots`
+# (`./gradlew :fabric:promoteScreenshots -Pscreenshots=<dir>`), never from a
+# local GPU.
 name: Tests
 
 on:
@@ -21,6 +22,8 @@ permissions: {}
 jobs:
   check:
     runs-on: ubuntu-24.04
+    # The game servers it starts could hang.
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -46,6 +49,8 @@ jobs:
 
   client:
     runs-on: ubuntu-24.04
+    # The game clients it starts could hang.
+    timeout-minutes: 30
     permissions:
       contents: read
     env:
@@ -71,6 +76,13 @@ jobs:
         with:
           name: screenshots
           path: fabric/build/run/clientGameTest/screenshots/
+          if-no-files-found: ignore
+      - name: Upload the renders of the production client
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: production-screenshots
+          path: fabric/build/run/productionClientGameTest/screenshots/
           if-no-files-found: ignore
       - name: Upload the logs
         if: ${{ !cancelled() }}

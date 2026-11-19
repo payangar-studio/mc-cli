@@ -36,7 +36,7 @@ Each issue owns its command handler (`crates/modpack/src/cli/<command>.rs`, incl
 ## Tests
 
 - Unit tests live in each module (`#[cfg(test)] mod tests`).
-- Integration tests of the CLI live in `tests/` and drive the binary with `assert_cmd`. Fixtures go in `tests/fixtures/`.
+- Integration tests of a binary live in `crates/<crate>/tests/` and drive it with `assert_cmd`. Fixtures go in `crates/<crate>/tests/fixtures/`.
 - A test writes an executable file with `write_executable` (`crates/modpack/tests/common/mod.rs`, included with `#[path]` from `src/`); `scripts/check-test-executables.sh` enforces it in CI.
 - No network call in default tests. A test that needs the network is `#[ignore]` and run explicitly (`cargo test -- --ignored`); a CurseForge one also skips itself when `CURSEFORGE_API_KEY` is not set.
 - Locally, run only the tests of the code you touched (`cargo test <filter>`), plus `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D warnings`. The full suite runs in CI on every push and pull request.

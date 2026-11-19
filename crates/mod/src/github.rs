@@ -26,8 +26,12 @@ pub const VARIABLES: [(&str, &str); 2] = [
     ),
 ];
 
-/// Where the owners of the workflows are declared.
+/// Where setup declares the owners of the workflows.
 pub const CODEOWNERS: &str = ".github/CODEOWNERS";
+
+/// Where GitHub looks for `CODEOWNERS`, in its order: the first one found is
+/// the only one it reads.
+const CODEOWNERS_PATHS: [&str; 3] = [CODEOWNERS, "CODEOWNERS", "docs/CODEOWNERS"];
 
 const USER_AGENT: &str = concat!("payangar-studio/mc-cli/", env!("CARGO_PKG_VERSION"));
 const AUTH_HINT: &str = "run `gh auth login` with an account that administers the repository, or set GH_TOKEN; pass --no-github to skip GitHub";
@@ -47,17 +51,27 @@ impl std::fmt::Display for Repo {
 
 impl Repo {
     /// The repository a git remote URL points to, when it is on github.com:
-    /// `https://github.com/o/r(.git)`, `git@github.com:o/r.git`,
-    /// `ssh://git@github.com/o/r.git`.
+    /// `scheme://[user@]github.com[:port]/o/r(.git)` or the scp-like
+    /// `[user@]github.com:o/r(.git)`. An SSH host alias is not resolved.
     pub fn from_remote(url: &str) -> Option<Self> {
         let url = url.trim();
-        let rest = [
-            "https://github.com/",
-            "git@github.com:",
-            "ssh://git@github.com/",
-        ]
-        .iter()
-        .find_map(|prefix| url.strip_prefix(prefix))?;
+        let (host, rest) = match url.split_once("://") {
+            Some((_, rest)) => {
+                let (authority, path) = rest.split_once('/')?;
+                let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+                (host.split_once(':').map_or(host, |(h, _)| h), path)
+            }
+            None => {
+                let (authority, path) = url.split_once(':')?;
+                (
+                    authority.rsplit_once('@').map_or(authority, |(_, h)| h),
+                    path,
+                )
+            }
+        };
+        if !host.eq_ignore_ascii_case("github.com") {
+            return None;
+        }
         let rest = rest.trim_end_matches('/');
         let rest = rest.strip_suffix(".git").unwrap_or(rest);
         let (owner, name) = rest.split_once('/')?;
@@ -73,6 +87,18 @@ impl Repo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RepoInfo {
     pub private: bool,
+    /// Owned by an organization, rather than a user.
+    pub organization: bool,
+}
+
+/// What became of the ruleset of the release tags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Protection {
+    Created,
+    /// It existed: it was left as it is, with what an admin changed in it.
+    Kept,
+    /// GitHub refuses rulesets on this private repository without a paid plan.
+    NeedsPlan,
 }
 
 /// A client of the GitHub REST API, authenticated by a token.
@@ -99,8 +125,17 @@ impl GitHub {
     }
 
     /// Sends `method path` with an optional JSON body; returns the status and
-    /// the JSON answer (`null` when empty).
+    /// the JSON answer (`null` when empty). A 401 or a 403 is an error.
     fn call(&self, method: &str, path: &str, body: Option<&Value>) -> Result<(u16, Value)> {
+        let (status, value) = self.send(method, path, body)?;
+        match status {
+            403 => Err(forbidden(method, path, &value)),
+            _ => Ok((status, value)),
+        }
+    }
+
+    /// [`Self::call`], with a 403 left to the caller.
+    fn send(&self, method: &str, path: &str, body: Option<&Value>) -> Result<(u16, Value)> {
         let url = format!("{}{path}", self.api);
         let auth = format!("Bearer {}", self.token);
         let what = format!("calling GitHub ({method} {path})");
@@ -134,13 +169,6 @@ impl GitHub {
                 "GitHub refused the token (401 Unauthorized)",
                 AUTH_HINT,
             )),
-            403 => Err(Error::usage(
-                format!(
-                    "GitHub refused {method} {path} (403 Forbidden): {}",
-                    message(&value)
-                ),
-                AUTH_HINT,
-            )),
             _ => Ok((status, value)),
         }
     }
@@ -153,6 +181,7 @@ impl GitHub {
             404 => Ok(None),
             200 => Ok(Some(RepoInfo {
                 private: value["private"].as_bool().unwrap_or(true),
+                organization: value["owner"]["type"].as_str() == Some("Organization"),
             })),
             _ => Err(unexpected("GET", &path, status, &value)),
         }
@@ -196,30 +225,34 @@ impl GitHub {
         }
     }
 
-    /// Creates or updates the ruleset [`RULESET`], found by its name among
-    /// the repository's own rulesets. Returns whether it was created.
-    pub fn protect_release_tags(&self, repo: &Repo) -> Result<bool> {
+    /// Creates the ruleset [`RULESET`] unless the repository has its own
+    /// ruleset of that name, which is left alone.
+    pub fn protect_release_tags(&self, repo: &Repo, info: RepoInfo) -> Result<Protection> {
         let path = format!("/repos/{repo}/rulesets");
         let list = format!("{path}?includes_parents=false&per_page=100");
-        let (status, value) = self.call("GET", &list, None)?;
+        let (status, value) = self.send("GET", &list, None)?;
+        // GitHub's answer on a private repository without a paid plan:
+        // "Upgrade to GitHub Pro or make this repository public [...]".
+        if status == 403 && info.private && message(&value).contains("Upgrade") {
+            return Ok(Protection::NeedsPlan);
+        }
+        if status == 403 {
+            return Err(forbidden("GET", &list, &value));
+        }
         if status != 200 {
             return Err(unexpected("GET", &list, status, &value));
         }
-        let existing = value.as_array().and_then(|rulesets| {
-            rulesets
-                .iter()
-                .find(|r| r["name"].as_str() == Some(RULESET))
-                .and_then(|r| r["id"].as_u64())
-        });
-        let body = release_tags_ruleset();
-        let (method, path, created) = match existing {
-            Some(id) => ("PUT", format!("{path}/{id}"), false),
-            None => ("POST", path, true),
-        };
-        let (status, answer) = self.call(method, &path, Some(&body))?;
+        let exists = value
+            .as_array()
+            .is_some_and(|rulesets| rulesets.iter().any(|r| r["name"].as_str() == Some(RULESET)));
+        if exists {
+            return Ok(Protection::Kept);
+        }
+        let body = release_tags_ruleset(info.organization);
+        let (status, answer) = self.call("POST", &path, Some(&body))?;
         match status {
-            200 | 201 => Ok(created),
-            _ => Err(unexpected(method, &path, status, &answer)),
+            200 | 201 => Ok(Protection::Created),
+            _ => Err(unexpected("POST", &path, status, &answer)),
         }
     }
 }
@@ -229,10 +262,10 @@ impl GitHub {
 ///
 /// - Each variable of [`VARIABLES`] takes the value given for it; without
 ///   one, a variable already set is kept, and a missing one gets the answer
-///   of `ask(name, question)`.
-/// - The ruleset of the release tags is created or updated. A private
-///   repository is skipped: rulesets need a paid plan there.
-/// - `CODEOWNERS` names the token's account, unless the file exists.
+///   of `ask(name, question)`. Every value is checked before the first change.
+/// - The ruleset of the release tags is created, or kept when it exists. A
+///   private repository without a paid plan is skipped: GitHub refuses it.
+/// - `CODEOWNERS` names the token's account, unless GitHub already has one.
 pub fn configure(
     gh: &GitHub,
     repo: &Repo,
@@ -247,12 +280,13 @@ pub fn configure(
         ));
         return Ok(done);
     };
+    let mut values = Vec::new();
     for ((name, question), value) in VARIABLES.into_iter().zip(given) {
         let value = match value {
             Some(value) => value,
             None => match gh.variable(repo, name)? {
                 Some(_) => {
-                    done.push(format!("Kept the variable {name}."));
+                    values.push((name, None));
                     continue;
                 }
                 None => ask(name, question)?,
@@ -264,21 +298,31 @@ pub fn configure(
                 format!("pass the value of {name}"),
             ));
         }
-        gh.set_variable(repo, name, value.trim())?;
-        done.push(format!("Set the variable {name}."));
+        values.push((name, Some(value)));
     }
-    if info.private {
-        tracing::warn!(
-            "{repo} is private: rulesets need a paid plan there, the release tags are not protected"
-        );
-        done.push("Skipped the ruleset of the release tags: the repository is private.".into());
-    } else if gh.protect_release_tags(repo)? {
-        done.push(format!("Created the ruleset `{RULESET}`."));
-    } else {
-        done.push(format!("Updated the ruleset `{RULESET}`."));
+    for (name, value) in values {
+        match value {
+            Some(value) => {
+                gh.set_variable(repo, name, value.trim())?;
+                done.push(format!("Set the variable {name}."));
+            }
+            None => done.push(format!("Kept the variable {name}.")),
+        }
     }
-    if root.join(CODEOWNERS).exists() {
-        done.push(format!("Kept {CODEOWNERS}."));
+    match gh.protect_release_tags(repo, info)? {
+        Protection::Created => done.push(format!("Created the ruleset `{RULESET}`.")),
+        Protection::Kept => done.push(format!("Kept the ruleset `{RULESET}`.")),
+        Protection::NeedsPlan => {
+            tracing::warn!(
+                "{repo} is private: GitHub needs a paid plan for rulesets there, the release tags are not protected"
+            );
+            done.push(
+                "Skipped the ruleset of the release tags: GitHub needs a paid plan for rulesets on this private repository.".into(),
+            );
+        }
+    }
+    if let Some(existing) = CODEOWNERS_PATHS.iter().find(|p| root.join(p).exists()) {
+        done.push(format!("Kept {existing}."));
     } else {
         let login = gh.login()?;
         write_codeowners(root, &login)?;
@@ -290,9 +334,18 @@ pub fn configure(
 }
 
 /// The ruleset that reserves the creation, update and deletion of `v*` tags
-/// to the administrators of the repository and of the organization: a tag
-/// publishes the mod, and the vault trusts any tag of the organization.
-pub fn release_tags_ruleset() -> Value {
+/// to the administrators of the repository and, for a repository of an
+/// `organization`, of the organization: a tag publishes the mod, and the
+/// vault trusts any tag of the organization.
+pub fn release_tags_ruleset(organization: bool) -> Value {
+    // Repository role 5 is the admin role.
+    let mut bypass_actors =
+        vec![json!({ "actor_type": "RepositoryRole", "actor_id": 5, "bypass_mode": "always" })];
+    if organization {
+        bypass_actors.push(
+            json!({ "actor_type": "OrganizationAdmin", "actor_id": null, "bypass_mode": "always" }),
+        );
+    }
     json!({
         "name": RULESET,
         "target": "tag",
@@ -305,11 +358,7 @@ pub fn release_tags_ruleset() -> Value {
             { "type": "update", "parameters": { "update_allows_fetch_and_merge": false } },
             { "type": "deletion" }
         ],
-        "bypass_actors": [
-            // Repository role 5 is the admin role.
-            { "actor_type": "RepositoryRole", "actor_id": 5, "bypass_mode": "always" },
-            { "actor_type": "OrganizationAdmin", "actor_id": null, "bypass_mode": "always" }
-        ]
+        "bypass_actors": bypass_actors
     })
 }
 
@@ -317,7 +366,7 @@ pub fn release_tags_ruleset() -> Value {
 pub fn codeowners(login: &str) -> String {
     format!(
         "# The workflows run with the repository's permissions and reach the vault:\n\
-         # a change to them needs the review of their owner.\n\
+         # a pull request that changes them requests the review of their owner.\n\
          /.github/workflows/ @{login}\n\
          /.github/CODEOWNERS @{login}\n"
     )
@@ -337,6 +386,16 @@ fn message(value: &Value) -> String {
         .as_str()
         .map(str::to_owned)
         .unwrap_or_else(|| value.to_string())
+}
+
+fn forbidden(method: &str, path: &str, value: &Value) -> Error {
+    Error::usage(
+        format!(
+            "GitHub refused {method} {path} (403 Forbidden): {}",
+            message(value)
+        ),
+        AUTH_HINT,
+    )
 }
 
 fn unexpected(method: &str, path: &str, status: u16, value: &Value) -> Error {

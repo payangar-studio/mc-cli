@@ -1,0 +1,21 @@
+# Fixture of the workflow template lint (tests/workflow_templates.rs).
+# Tags, plus every branch but one: not limited to tags.
+name: Fixture
+
+on:
+  push:
+    tags: ["v*"]
+    branches-ignore: ["gh-pages"]
+
+permissions: {}
+
+jobs:
+  job:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false

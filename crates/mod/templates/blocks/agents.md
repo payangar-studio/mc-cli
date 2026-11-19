@@ -26,8 +26,6 @@ Every command runs without a terminal: a missing value is an error that names th
 |---|---|
 | Build and unit tests | `./gradlew build` |
 
-CI runs the same commands on every push and pull request.
-
 ### What counts as proof
 
 - A bug fix: a test that fails before the fix and passes after it.

@@ -28,9 +28,16 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
         println!("Skipped the GitHub repository (--no-github).");
         return Ok(());
     }
-    let Some(repo) = origin(root) else {
+    let Some(url) = origin(root) else {
         println!(
             "No GitHub remote `origin`: skipped the GitHub repository. Push the mod to GitHub, then run `mod setup` again."
+        );
+        return Ok(());
+    };
+    let Some(repo) = Repo::from_remote(&url) else {
+        println!(
+            "The remote `origin` ({}) is not a github.com URL: skipped the GitHub repository. Set it to https://github.com/<owner>/<repository>, then run `mod setup` again.",
+            url.trim()
         );
         return Ok(());
     };
@@ -55,15 +62,15 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
     Ok(())
 }
 
-/// The GitHub repository of the remote `origin`, if any.
-fn origin(root: &Path) -> Option<Repo> {
+/// The URL of the remote `origin`, if any.
+fn origin(root: &Path) -> Option<String> {
     let output = Command::new("git")
         .args(["remote", "get-url", "origin"])
         .current_dir(root)
         .output()
         .ok()
         .filter(|o| o.status.success())?;
-    Repo::from_remote(&String::from_utf8_lossy(&output.stdout))
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// A GitHub token: `GH_TOKEN`, `GITHUB_TOKEN`, else the one of the `gh` CLI.

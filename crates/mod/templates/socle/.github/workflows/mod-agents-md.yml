@@ -1,8 +1,9 @@
 # Managed by mc-cli: `mod update` rewrites this file.
 # baudrier check-agents-md CI job, version 2.
 #
-# Checks every AGENTS.md and CLAUDE.md, with the amendment limits measured from
-# the pull request's base, or from the default branch on a push.
+# Checks every AGENTS.md and CLAUDE.md. A pull request also gets the amendment
+# limits, measured from its base; a push is checked without them, since each
+# version branch has its own history apart from the default branch.
 name: Agent instructions
 
 on:
@@ -27,5 +28,5 @@ jobs:
           node-version: 24
       - name: Check AGENTS.md and CLAUDE.md
         env:
-          BASE: origin/${{ github.base_ref || github.event.repository.default_branch }}
-        run: node .mod/scripts/check-agents-md.mjs --base "$BASE"
+          BASE: ${{ github.base_ref }}
+        run: node .mod/scripts/check-agents-md.mjs ${BASE:+--base "origin/$BASE"}

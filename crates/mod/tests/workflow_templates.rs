@@ -6,8 +6,8 @@
 //!   `scripts/check-workflow-pins.sh`);
 //! - no permission at the workflow level: each job states its own;
 //! - `id-token: write` only in a workflow run by tags (and by hand);
-//! - no `github.event` nor `github.head_ref` value in a `run` script: they go
-//!   through `env`.
+//! - no `github.event` nor `github.head_ref` value in a script (`run`, or the
+//!   `script` input of `actions/github-script`): they go through `env`.
 //!
 //! The lint runs on the templates, and on fixtures: one defect per rule, and
 //! the closest legitimate cases.
@@ -48,7 +48,8 @@ fn lint(path: &Path) -> Vec<String> {
         .iter()
         .all(|t| t == "workflow_dispatch" || t == "push")
         && doc["on"]["push"]["tags"].as_vec().is_some()
-        && doc["on"]["push"]["branches"].is_badvalue();
+        && doc["on"]["push"]["branches"].is_badvalue()
+        && doc["on"]["push"]["branches-ignore"].is_badvalue();
     let jobs = doc["jobs"].as_hash().expect("a workflow has jobs");
     for (name, job) in jobs {
         let name = name.as_str().unwrap_or("?");
@@ -64,10 +65,12 @@ fn lint(path: &Path) -> Vec<String> {
             ));
         }
         for step in job["steps"].as_vec().into_iter().flatten() {
-            let Some(run) = step["run"].as_str() else {
-                continue;
-            };
-            for expression in run.split("${{").skip(1) {
+            let scripts = [&step["run"], &step["with"]["script"]];
+            for expression in scripts
+                .into_iter()
+                .filter_map(Yaml::as_str)
+                .flat_map(|script| script.split("${{").skip(1))
+            {
                 let expression = expression.split("}}").next().unwrap_or_default();
                 if expression.contains("github.event") || expression.contains("github.head_ref") {
                     errors.push(format!(
@@ -157,7 +160,15 @@ fn each_defect_fails_on_its_rule() {
             "`id-token: write` in a workflow not limited to tags",
         ),
         (
+            "id-token-on-branches-ignore.yml",
+            "`id-token: write` in a workflow not limited to tags",
+        ),
+        (
             "event-in-run.yml",
+            "injection: job `job` writes `${{ github.event.pull_request.title }}`",
+        ),
+        (
+            "event-in-script.yml",
             "injection: job `job` writes `${{ github.event.pull_request.title }}`",
         ),
     ] {

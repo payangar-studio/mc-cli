@@ -21,12 +21,41 @@ fn auth() -> Matcher {
 }
 
 fn serve_repo(server: &mut ServerGuard, private: bool) -> mockito::Mock {
+    serve_repo_of(server, private, "Organization")
+}
+
+fn serve_repo_of(server: &mut ServerGuard, private: bool, owner: &str) -> mockito::Mock {
     server
         .mock("GET", REPO)
         .match_header("authorization", auth())
         .with_status(200)
         .with_body(
-            json!({ "full_name": "payangar-studio/swift-blades", "private": private }).to_string(),
+            json!({
+                "full_name": "payangar-studio/swift-blades",
+                "private": private,
+                "owner": { "login": "payangar-studio", "type": owner },
+            })
+            .to_string(),
+        )
+        .create()
+}
+
+/// Every variable PATCH succeeds.
+fn any_variable(server: &mut ServerGuard) -> mockito::Mock {
+    server
+        .mock("PATCH", Matcher::Regex("/actions/variables/".into()))
+        .with_status(204)
+        .create()
+}
+
+/// The answer GitHub gives to rulesets on a private repository of a free plan.
+fn rulesets_need_a_plan(server: &mut ServerGuard) -> mockito::Mock {
+    server
+        .mock("GET", format!("{REPO}/rulesets").as_str())
+        .match_query(Matcher::Any)
+        .with_status(403)
+        .with_body(
+            r#"{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature.","status":"403"}"#,
         )
         .create()
 }
@@ -96,6 +125,12 @@ fn remote_urls_name_the_repository() {
         "https://github.com/payangar-studio/swift-blades",
         "git@github.com:payangar-studio/swift-blades.git",
         "ssh://git@github.com/payangar-studio/swift-blades.git\n",
+        "https://user@github.com/payangar-studio/swift-blades.git",
+        "https://user:secret@github.com/payangar-studio/swift-blades",
+        "http://github.com/payangar-studio/swift-blades.git",
+        "ssh://git@github.com:22/payangar-studio/swift-blades.git",
+        "https://GitHub.com/payangar-studio/swift-blades.git",
+        "github.com:payangar-studio/swift-blades.git",
     ] {
         assert_eq!(Repo::from_remote(url), Some(repo()), "{url}");
     }
@@ -103,6 +138,9 @@ fn remote_urls_name_the_repository() {
         "https://gitlab.com/payangar-studio/swift-blades.git",
         "https://github.com/payangar-studio",
         "git@github.com:a/b/c.git",
+        "https://github.com.evil.example/payangar-studio/swift-blades.git",
+        "git@github-work:payangar-studio/swift-blades.git",
+        "/home/me/swift-blades",
         "",
     ] {
         assert_eq!(Repo::from_remote(url), None, "{url}");
@@ -120,7 +158,7 @@ fn a_new_repository_gets_the_variables_the_ruleset_and_codeowners() {
     let create = server
         .mock("POST", format!("{REPO}/rulesets").as_str())
         .match_header("authorization", auth())
-        .match_body(Matcher::Json(release_tags_ruleset()))
+        .match_body(Matcher::Json(release_tags_ruleset(true)))
         .with_status(201)
         .with_body(r#"{"id":42}"#)
         .create();
@@ -159,7 +197,7 @@ fn a_new_repository_gets_the_variables_the_ruleset_and_codeowners() {
 
 #[test]
 fn the_ruleset_reserves_v_tags_to_admins() {
-    let ruleset = release_tags_ruleset();
+    let ruleset = release_tags_ruleset(true);
     assert_eq!(ruleset["target"], "tag");
     assert_eq!(ruleset["enforcement"], "active");
     assert_eq!(
@@ -183,7 +221,39 @@ fn the_ruleset_reserves_v_tags_to_admins() {
 }
 
 #[test]
-fn a_second_run_updates_in_place_and_keeps_what_is_set() {
+fn a_user_repository_gets_no_organization_admin_bypass() {
+    let mut server = Server::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _repo = serve_repo_of(&mut server, false, "User");
+    let _vars = any_variable(&mut server);
+    let _list = no_rulesets(&mut server);
+    let create = server
+        .mock("POST", format!("{REPO}/rulesets").as_str())
+        .match_body(Matcher::Json(release_tags_ruleset(false)))
+        .with_status(201)
+        .with_body(r#"{"id":42}"#)
+        .create();
+    let _user = serve_user(&mut server);
+
+    configure(
+        &client(&server),
+        &repo(),
+        tmp.path(),
+        [Some("u".into()), Some("i".into())],
+        never_asked,
+    )
+    .unwrap();
+
+    create.assert();
+    let actors = release_tags_ruleset(false)["bypass_actors"].clone();
+    assert_eq!(
+        actors,
+        json!([{ "actor_type": "RepositoryRole", "actor_id": 5, "bypass_mode": "always" }])
+    );
+}
+
+#[test]
+fn a_second_run_keeps_what_is_set() {
     let mut server = Server::new();
     let tmp = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(tmp.path().join(".github")).unwrap();
@@ -215,12 +285,8 @@ fn a_second_run_updates_in_place_and_keeps_what_is_set() {
         .with_status(200)
         .with_body(r#"[{"id":7,"name":"Something else"},{"id":42,"name":"Release tags"}]"#)
         .create();
-    let put = server
-        .mock("PUT", format!("{REPO}/rulesets/42").as_str())
-        .match_body(Matcher::Json(release_tags_ruleset()))
-        .with_status(200)
-        .with_body(r#"{"id":42}"#)
-        .create();
+    // The ruleset exists: an admin may have changed it, it is left alone.
+    let put = server.mock("PUT", Matcher::Any).expect(0).create();
     let post = server.mock("POST", Matcher::Any).expect(0).create();
 
     let done = configure(
@@ -240,7 +306,7 @@ fn a_second_run_updates_in_place_and_keeps_what_is_set() {
         [
             "Set the variable INFISICAL_URL.",
             "Kept the variable INFISICAL_IDENTITY_ID.",
-            "Updated the ruleset `Release tags`.",
+            "Kept the ruleset `Release tags`.",
             "Kept .github/CODEOWNERS.",
         ]
     );
@@ -262,10 +328,7 @@ fn a_missing_value_is_asked_for() {
     let _url = create_variable(&mut server, "INFISICAL_URL", "https://asked.example");
     let _id = create_variable(&mut server, "INFISICAL_IDENTITY_ID", "asked-id");
     let _user = serve_user(&mut server);
-    let rulesets = server
-        .mock("GET", Matcher::Regex("/rulesets".into()))
-        .expect(0)
-        .create();
+    let rulesets = rulesets_need_a_plan(&mut server);
     let mut asked = Vec::new();
 
     let done = configure(
@@ -284,12 +347,102 @@ fn a_missing_value_is_asked_for() {
     .unwrap();
 
     assert_eq!(asked, ["INFISICAL_URL", "INFISICAL_IDENTITY_ID"]);
-    // Private: no ruleset, a line says so.
+    // Private on a free plan: GitHub refuses rulesets, a line says so.
     rulesets.assert();
     assert!(
-        done.iter().any(|l| l.contains("the repository is private")),
+        done.iter().any(|l| l.contains("needs a paid plan")),
         "{done:?}"
     );
+}
+
+#[test]
+fn a_private_repository_on_a_paid_plan_gets_the_ruleset() {
+    let mut server = Server::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let _repo = serve_repo(&mut server, true);
+    let _vars = any_variable(&mut server);
+    let _list = no_rulesets(&mut server);
+    let create = server
+        .mock("POST", format!("{REPO}/rulesets").as_str())
+        .with_status(201)
+        .with_body(r#"{"id":42}"#)
+        .create();
+    let _user = serve_user(&mut server);
+
+    let done = configure(
+        &client(&server),
+        &repo(),
+        tmp.path(),
+        [Some("u".into()), Some("i".into())],
+        never_asked,
+    )
+    .unwrap();
+
+    create.assert();
+    assert!(
+        done.contains(&"Created the ruleset `Release tags`.".to_owned()),
+        "{done:?}"
+    );
+}
+
+#[test]
+fn a_bad_value_stops_setup_before_any_change() {
+    for given in [
+        [Some("https://vault.example".into()), Some(" ".into())],
+        [Some("https://vault.example".into()), None],
+    ] {
+        let mut server = Server::new();
+        let tmp = tempfile::tempdir().unwrap();
+        let _repo = serve_repo(&mut server, false);
+        let _missing = no_variable(&mut server, "INFISICAL_IDENTITY_ID");
+        let writes = server.mock("PATCH", Matcher::Any).expect(0).create();
+        let creates = server.mock("POST", Matcher::Any).expect(0).create();
+
+        // Without a terminal, a missing value is a usage error.
+        let err = configure(&client(&server), &repo(), tmp.path(), given, |name, _| {
+            Err(Error::usage(format!("missing {name}"), "pass it"))
+        })
+        .unwrap_err();
+
+        assert_eq!(err.kind(), ErrorKind::Usage);
+        writes.assert();
+        creates.assert();
+        assert!(!tmp.path().join(CODEOWNERS).exists());
+    }
+}
+
+#[test]
+fn a_codeowners_elsewhere_is_kept() {
+    for path in ["CODEOWNERS", "docs/CODEOWNERS"] {
+        let mut server = Server::new();
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "* @team\n").unwrap();
+        let _repo = serve_repo(&mut server, false);
+        let _vars = any_variable(&mut server);
+        let _list = server
+            .mock("GET", format!("{REPO}/rulesets").as_str())
+            .match_query(Matcher::Any)
+            .with_status(200)
+            .with_body(r#"[{"id":42,"name":"Release tags"}]"#)
+            .create();
+
+        let done = configure(
+            &client(&server),
+            &repo(),
+            tmp.path(),
+            [Some("u".into()), Some("i".into())],
+            never_asked,
+        )
+        .unwrap();
+
+        assert!(
+            !tmp.path().join(CODEOWNERS).exists(),
+            "{path}: .github/CODEOWNERS would override it"
+        );
+        assert_eq!(done.last().unwrap(), &format!("Kept {path}."), "{done:?}");
+    }
 }
 
 #[test]
@@ -341,10 +494,7 @@ fn a_ruleset_refused_names_the_answer() {
     let mut server = Server::new();
     let tmp = tempfile::tempdir().unwrap();
     let _repo = serve_repo(&mut server, false);
-    let _patch = server
-        .mock("PATCH", Matcher::Regex("/actions/variables/".into()))
-        .with_status(204)
-        .create();
+    let _patch = any_variable(&mut server);
     let _list = no_rulesets(&mut server);
     let _create = server
         .mock("POST", format!("{REPO}/rulesets").as_str())

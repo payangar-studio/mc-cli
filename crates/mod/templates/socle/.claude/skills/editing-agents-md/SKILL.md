@@ -7,7 +7,7 @@ description: How to change an AGENTS.md or CLAUDE.md in this project, at the roo
 # Editing AGENTS.md and CLAUDE.md
 
 The principles behind these steps are in the `harness` skill of the baudrier
-plugin, under "What the agent reads".
+plugin, under "What the agent reads", when that plugin is installed.
 
 ## 1. Route the change
 

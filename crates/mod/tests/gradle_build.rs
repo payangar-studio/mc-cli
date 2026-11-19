@@ -265,3 +265,82 @@ fn a_malformed_dependency_is_named() {
         "{log}"
     );
 }
+
+/// The template package of the shared library (`templates/library/`).
+const LIBRARY_PACKAGE: &str = "com.payangar.socle.vendor";
+
+/// Copies the shared library and its tests into the generated mod `root`,
+/// with `common/` of the templates as `common/` of the mod, rewriting the
+/// template package to the mod's vendor package. Until `mod init` copies the
+/// library itself, this test does it, and adds JUnit to `common`.
+fn copy_library(root: &Path) {
+    let templates = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates/library");
+    let package = "com.payangar.swiftblades.vendor";
+    let template_dir = LIBRARY_PACKAGE.replace('.', "/");
+    let package_dir = package.replace('.', "/");
+    let mut copied = 0;
+    for entry in walk(&templates) {
+        let relative = entry.strip_prefix(&templates).unwrap().to_str().unwrap();
+        let target = root.join(relative.replace(&template_dir, &package_dir));
+        let text = fs::read_to_string(&entry).unwrap();
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, text.replace(LIBRARY_PACKAGE, package)).unwrap();
+        copied += 1;
+    }
+    assert!(copied > 0, "no library file in {}", templates.display());
+
+    let build = root.join("common/build.gradle.kts");
+    let mut script = fs::read_to_string(&build).unwrap();
+    script.push_str(
+        r#"
+dependencies {
+    "testImplementation"(platform("org.junit:junit-bom:6.1.3"))
+    "testImplementation"("org.junit.jupiter:junit-jupiter")
+    "testRuntimeOnly"("org.junit.platform:junit-platform-launcher")
+}
+
+tasks.named<Test>("test") {
+    useJUnitPlatform()
+}
+"#,
+    );
+    fs::write(&build, script).unwrap();
+}
+
+/// Every file under `dir`, recursively.
+fn walk(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            files.extend(walk(&path));
+        } else {
+            files.push(path);
+        }
+    }
+    files
+}
+
+/// The shared library compiles in a generated mod for both loaders, and its
+/// unit tests pass there.
+#[test]
+#[ignore = "downloads Gradle, the loaders, Minecraft and JUnit"]
+fn library_tests_pass_in_a_generated_mod() {
+    let (_tmp, root) = init("fabric,neoforge", "both-required");
+    copy_library(&root);
+    gradle_ok(&root, &["build"]);
+    assert!(jar(&root, "fabric").is_file());
+    assert!(jar(&root, "neoforge").is_file());
+
+    // Each test class ran: a green build with no test run proves nothing.
+    let results = root.join("common/build/test-results/test");
+    for class in ["ConfigSchemaTest", "ConfigFileTest"] {
+        let report = results.join(format!(
+            "TEST-com.payangar.swiftblades.vendor.config.{class}.xml"
+        ));
+        let text =
+            fs::read_to_string(&report).unwrap_or_else(|e| panic!("{}: {e}", report.display()));
+        assert!(!text.contains("tests=\"0\""), "{class} ran no test");
+        assert!(text.contains("failures=\"0\""), "{text}");
+    }
+}

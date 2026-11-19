@@ -103,6 +103,38 @@ fn keep_runs(root: &Path, name: &str) {
     }
 }
 
+/// The JUnit tests of the shared library copied into `subproject` of a mod
+/// with both loaders: one per `@Test` under its `src/test`.
+fn library_tests(subproject: &str) -> usize {
+    fn count(dir: &Path) -> usize {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return 0;
+        };
+        entries
+            .map(|e| e.unwrap().path())
+            .map(|path| {
+                if path.is_dir() {
+                    count(&path)
+                } else {
+                    let text = fs::read_to_string(&path).unwrap();
+                    assert!(
+                        !text.contains("@ParameterizedTest") && !text.contains("@TestFactory"),
+                        "{}: count its tests here",
+                        path.display()
+                    );
+                    text.lines().filter(|l| l.trim() == "@Test").count()
+                }
+            })
+            .sum()
+    }
+    count(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("templates/library")
+            .join(subproject)
+            .join("src/test"),
+    )
+}
+
 fn copy_dir(from: &Path, to: &Path) {
     fs::create_dir_all(to).unwrap();
     for entry in fs::read_dir(from).unwrap().map(|e| e.unwrap()) {
@@ -140,10 +172,10 @@ fn every_layer_passes() {
     );
     let log = log(&output);
     for (task, tests) in [
-        (":common:test", 1),
-        (":fabric:test", 1),
+        (":common:test", 1 + library_tests("common")),
+        (":fabric:test", 1 + library_tests("fabric")),
         (":fabric:runGameTest", 1),
-        (":neoforge:test", 2),
+        (":neoforge:test", 2 + library_tests("neoforge")),
         (":neoforge:runGameTestServer", 1),
     ] {
         assert!(

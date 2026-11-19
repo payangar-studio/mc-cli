@@ -164,9 +164,9 @@ fn project_name_gives_slug_and_title() {
 
 #[test]
 fn registered_under_its_name_with_page_by_api() {
-    let registry = Registry::builtin();
-    let modrinth = registry.get("modrinth").unwrap();
-    for (_, capability) in Registry::capabilities(modrinth) {
+    let modrinth = Modrinth::default();
+    assert_eq!(modrinth.name(), "modrinth");
+    for (_, capability) in Registry::capabilities(&modrinth) {
         assert_eq!(capability, Capability::Api);
     }
 }

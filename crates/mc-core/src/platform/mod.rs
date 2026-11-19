@@ -2,8 +2,9 @@
 //!
 //! A CLI never names a platform: it iterates over the registry, or looks a
 //! platform up by a name it read somewhere (a manifest table, `--platform`).
-//! Adding a platform is adding an implementation and one line in
-//! [`Registry::builtin`].
+//! Each binary builds its own registry of the platforms it uses
+//! (`modpack::platform::builtin` for the modpack CLI): adding a platform is
+//! adding an implementation and one line in each binary's list.
 //!
 //! Each platform owns the table named after it in every entry
 //! ([`Entry::platforms`]); nobody else reads or writes it.
@@ -228,14 +229,6 @@ impl<P: ?Sized + Platform> Registry<P> {
 }
 
 impl Registry {
-    /// The platforms built in, in the order they are tried.
-    pub fn builtin() -> Self {
-        Self::new(vec![
-            Box::new(modrinth::Modrinth::default()),
-            Box::new(curseforge::CurseForge::new()),
-        ])
-    }
-
     /// Every operation of a platform with its capability.
     pub fn capabilities(platform: &dyn Platform) -> Vec<(Operation, Capability)> {
         Operation::ALL

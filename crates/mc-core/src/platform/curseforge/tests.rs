@@ -115,7 +115,6 @@ fn declares_its_capabilities() {
         cf.capability(Operation::PushPage),
         Capability::Skill("modpack-curseforge-page")
     );
-    assert!(crate::platform::Registry::builtin().find(NAME).is_some());
 }
 
 #[test]

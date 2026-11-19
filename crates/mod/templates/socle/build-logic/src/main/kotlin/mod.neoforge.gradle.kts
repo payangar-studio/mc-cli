@@ -4,8 +4,20 @@
 // the client code of a NeoForge-only mod lives in the `client` packages, and
 // NeoForge hides client classes from a dedicated server in development.
 // META-INF/neoforge.mods.toml is generated from mod.toml.
+//
+// The tests:
+// - `test`: JUnit in src/test with the game and the mod loaded (MDG's unit
+//   tests), an ephemeral server at hand (NeoForge's testframework);
+// - `runGameTestServer`: the server gametests of src/gametest, a test mod
+//   `<id>_gametest` with its own neoforge.mods.toml, on a headless server;
+// - `runServerSelfTest` and `runClientSelfTest`: NeoForge's boot self-tests,
+//   a dedicated server and a client that start with the mod and stop.
+// `check` runs the first three, `clientCheck` the client self-test, on a
+// virtual display (Xvfb) when there is one. Each fails when no test ran.
 
 import net.neoforged.moddevgradle.dsl.NeoForgeExtension
+import net.neoforged.moddevgradle.dsl.RunModel
+import net.neoforged.moddevgradle.internal.RunGameTask
 
 plugins {
     id("mod.java")
@@ -62,4 +74,96 @@ val generateModMetadata = tasks.register<Copy>("generateModMetadata") {
 sourceSets["main"].resources.srcDir(layout.buildDirectory.dir("generated/modMetadata"))
 tasks.named<ProcessResources>("processResources") {
     dependsOn(generateModMetadata)
+}
+
+// The tests.
+
+val gametestReport = layout.buildDirectory.file("test-results/runGameTestServer/report.xml")
+val serverSelfTestReport = layout.buildDirectory.file("selftest/server")
+val clientSelfTestReport = layout.buildDirectory.file("selftest/client")
+val gametestModId = "${mod.id}_gametest"
+val gametest = sourceSets.create("gametest")
+
+extensions.configure<NeoForgeExtension> {
+    addModdingDependenciesTo(gametest)
+    val main = mods[mod.id]
+    val testMod = mods.register(gametestModId) { sourceSet(gametest) }
+    unitTest {
+        enable()
+        testedMod.set(main)
+        loadedMods.set(listOf(main))
+    }
+    runs.register("gameTestServer") {
+        type.set("gameTestServer")
+        sourceSet.set(gametest)
+        loadedMods.set(listOf(main, testMod.get()))
+        programArgument("--report")
+        programArgument(gametestReport.get().asFile.absolutePath)
+    }
+    fun RunModel.selfTest(variable: String, report: Provider<RegularFile>) {
+        environment(variable, report.get().asFile.absolutePath)
+        loadedMods.set(listOf(main))
+        gameDirectory.set(layout.buildDirectory.dir("run/$name"))
+    }
+    runs.register("serverSelfTest") {
+        server()
+        selfTest("NEOFORGE_DEDICATED_SERVER_SELFTEST", serverSelfTestReport)
+    }
+    runs.register("clientSelfTest") {
+        client()
+        selfTest("NEOFORGE_CLIENT_SELFTEST", clientSelfTestReport)
+    }
+}
+
+gametest.compileClasspath += sourceSets["main"].output
+gametest.runtimeClasspath += sourceSets["main"].output
+if (hasCommon) {
+    val classes = configurations["commonMainClasses"] + configurations["commonClientClasses"]
+    gametest.compileClasspath += classes
+    gametest.runtimeClasspath += classes
+    sourceSets["test"].compileClasspath += classes
+    sourceSets["test"].runtimeClasspath += classes
+}
+
+dependencies {
+    "testImplementation"("net.neoforged:testframework:${pinned.neoforge}")
+}
+
+val runGameTestServer = tasks.named<RunGameTask>("runGameTestServer") {
+    group = "verification"
+    // The game does not create the report's directory.
+    doFirst { gametestReport.get().asFile.apply { delete(); parentFile.mkdirs() } }
+}
+requireTestsRan(
+    runGameTestServer,
+    gametestReport.map { it.asFile.parentFile },
+    "Register a test through RegisterGameTestsEvent in the test mod of neoforge/src/gametest.",
+)
+
+/** Fails `task` when NeoForge did not write its self-test `report`: the game did not finish starting. */
+fun selfTest(task: String, report: Provider<RegularFile>, what: String) = tasks.named<RunGameTask>(task) {
+    group = "verification"
+    // The dedicated server stops at once without it.
+    doFirst {
+        val file = report.get().asFile
+        file.delete()
+        file.parentFile.mkdirs()
+        gameDirectory.get().asFile.resolve("eula.txt").apply { parentFile.mkdirs() }.writeText("eula=true\n")
+    }
+    doLast {
+        if (!report.get().asFile.isFile) throw GradleException("$path: the $what did not finish starting.")
+    }
+}
+
+val runServerSelfTest = selfTest("runServerSelfTest", serverSelfTestReport, "dedicated server")
+val runClientSelfTest = selfTest("runClientSelfTest", clientSelfTestReport, "client")
+onVirtualDisplay(runClientSelfTest)
+
+tasks.named("check") {
+    dependsOn(runGameTestServer, runServerSelfTest)
+}
+tasks.register("clientCheck") {
+    group = "verification"
+    description = "Runs NeoForge's client self-test."
+    dependsOn(runClientSelfTest)
 }

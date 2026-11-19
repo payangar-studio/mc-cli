@@ -33,12 +33,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check that every action is pinned by commit SHA
-        run: bash scripts/check-workflow-pins.sh
+        run: |
+          bash scripts/check-workflow-pins.sh
+          bash scripts/check-workflow-pins.sh crates/*/templates/socle/.github/workflows/*.yml
       - name: Test that check
         run: bash scripts/test-check-workflow-pins.sh
       # A pinned release, checked against its published checksum. The runner's
       # shellcheck lints the `run` scripts too. The socle's workflow template is
-      # linted with this repository's own workflows: it ships into every pack.
+      # linted with this repository's own workflows: they ship into every pack
+      # and every mod.
       - name: Lint the workflows
         env:
           VERSION: 1.7.12
@@ -48,7 +51,7 @@ jobs:
           curl -sSfLO "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/${archive}"
           echo "${SHA256}  ${archive}" | sha256sum -c -
           tar xzf "$archive" actionlint
-          ./actionlint -color .github/workflows/*.yml crates/modpack/templates/socle/.github/workflows/*.yml
+          ./actionlint -color .github/workflows/*.yml crates/*/templates/socle/.github/workflows/*.yml
 
   # Builds projects made by `mod init` with Gradle: both loaders, each alone,
   # the loader metadata for each side, the client split of `common`.
@@ -66,3 +69,36 @@ jobs:
           rustup default stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo test -p mc-mod --locked --test gradle_build -- --ignored --test-threads=1
+
+  # The test pyramid of a project made by `mod init`: each layer's example
+  # passes and each guard catches its defect. Same packages and environment as
+  # the client job of the mod's workflow (templates/socle/.github/workflows).
+  mod-tests:
+    runs-on: ubuntu-24.04
+    env:
+      SDL_OPENGL_FORCE_SRGB_FRAMEBUFFER: skip
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Install the virtual display and the software renderers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb mesa-vulkan-drivers
+      - name: Install the stable Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo test -p mc-mod --locked --test test_pyramid -- --ignored --test-threads=1
+        env:
+          MOD_TESTS_ARTIFACTS: ${{ runner.temp }}/mod-tests
+      - name: Upload the renders and logs of the generated mods
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mod-tests
+          path: ${{ runner.temp }}/mod-tests/
+          if-no-files-found: ignore

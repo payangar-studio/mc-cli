@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "{{id}}_gametest",
+  "version": "0.0.0",
+  "name": "{{id}} gametests",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-gametest": ["{{package}}.gametest.ExampleServerGameTest"],
+    "fabric-client-gametest": ["{{package}}.gametest.ExampleClientGameTest"]
+  },
+  "depends": {
+    "fabric-api": "*"
+  }
+}

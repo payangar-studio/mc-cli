@@ -17,7 +17,6 @@
 
 import net.neoforged.moddevgradle.dsl.NeoForgeExtension
 import net.neoforged.moddevgradle.dsl.RunModel
-import net.neoforged.moddevgradle.internal.RunGameTask
 
 plugins {
     id("mod.java")
@@ -84,6 +83,9 @@ val clientSelfTestReport = layout.buildDirectory.file("selftest/client")
 val gametestModId = "${mod.id}_gametest"
 val gametest = sourceSets.create("gametest")
 
+/** The game directory of the self-test run `run`. */
+fun selfTestDirectory(run: String) = layout.buildDirectory.dir("run/$run")
+
 extensions.configure<NeoForgeExtension> {
     addModdingDependenciesTo(gametest)
     val main = mods[mod.id]
@@ -103,7 +105,7 @@ extensions.configure<NeoForgeExtension> {
     fun RunModel.selfTest(variable: String, report: Provider<RegularFile>) {
         environment(variable, report.get().asFile.absolutePath)
         loadedMods.set(listOf(main))
-        gameDirectory.set(layout.buildDirectory.dir("run/$name"))
+        gameDirectory.set(selfTestDirectory(name))
     }
     runs.register("serverSelfTest") {
         server()
@@ -129,7 +131,7 @@ dependencies {
     "testImplementation"("net.neoforged:testframework:${pinned.neoforge}")
 }
 
-val runGameTestServer = tasks.named<RunGameTask>("runGameTestServer") {
+val runGameTestServer = tasks.named<JavaExec>("runGameTestServer") {
     group = "verification"
     // The game does not create the report's directory.
     doFirst { gametestReport.get().asFile.apply { delete(); parentFile.mkdirs() } }
@@ -140,9 +142,13 @@ requireTestsRan(
     "Register a test through RegisterGameTestsEvent in the test mod of neoforge/src/gametest.",
 )
 
-/** Fails `task` when NeoForge did not write its self-test `report`: the game did not finish starting. */
-fun selfTest(task: String, report: Provider<RegularFile>, what: String) = tasks.named<RunGameTask>(task) {
+/**
+ * Fails the task of the self-test run `run` when NeoForge did not write its
+ * self-test `report`: the game did not finish starting.
+ */
+fun selfTest(run: String, report: Provider<RegularFile>, what: String) = tasks.named<JavaExec>("run" + run.replaceFirstChar { it.uppercase() }) {
     group = "verification"
+    val gameDirectory = selfTestDirectory(run)
     // The dedicated server stops at once without it.
     doFirst {
         val file = report.get().asFile
@@ -155,8 +161,8 @@ fun selfTest(task: String, report: Provider<RegularFile>, what: String) = tasks.
     }
 }
 
-val runServerSelfTest = selfTest("runServerSelfTest", serverSelfTestReport, "dedicated server")
-val runClientSelfTest = selfTest("runClientSelfTest", clientSelfTestReport, "client")
+val runServerSelfTest = selfTest("serverSelfTest", serverSelfTestReport, "dedicated server")
+val runClientSelfTest = selfTest("clientSelfTest", clientSelfTestReport, "client")
 onVirtualDisplay(runClientSelfTest)
 
 tasks.named("check") {

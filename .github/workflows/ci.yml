@@ -29,7 +29,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # A pinned release, checked against its published checksum. The runner's
-      # shellcheck lints the `run` scripts too.
+      # shellcheck lints the `run` scripts too. The socle's workflow template is
+      # linted with this repository's own workflows: it ships into every pack.
       - name: Lint the workflows
         env:
           VERSION: 1.7.12
@@ -39,4 +40,4 @@ jobs:
           curl -sSfLO "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/${archive}"
           echo "${SHA256}  ${archive}" | sha256sum -c -
           tar xzf "$archive" actionlint
-          ./actionlint -color
+          ./actionlint -color .github/workflows/*.yml crates/modpack/templates/socle/.github/workflows/*.yml

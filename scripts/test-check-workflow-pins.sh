@@ -32,6 +32,13 @@ expect fail no-ref "      - uses: actions/checkout"
 expect fail no-comment "      - uses: actions/checkout@$sha"
 expect fail reusable-tag "    uses: payangar-studio/mc-cli/.github/workflows/publish-modpack.yml@v0.4.0"
 expect fail quoted-tag "        uses: 'actions/upload-artifact@v7'"
+expect fail flow-tag "      - {uses: actions/checkout@v7}"
+expect fail flow-second-key-tag "      - {name: Checkout, uses: actions/checkout@v7}"
+expect fail quoted-key-tag "      - \"uses\": actions/checkout@v7"
+expect fail comment-not-version "      - uses: actions/checkout@$sha # TODO"
+expect fail comment-branch "      - uses: dtolnay/rust-toolchain@$sha # stable"
+expect pass flow-pinned "      - {uses: actions/checkout@$sha} # v7.0.1"
+expect pass quoted-key-pinned "      - 'uses': actions/checkout@$sha # v7.0.1"
 
 if [[ $failures -ne 0 ]]; then
   echo "$failures case(s) failed."

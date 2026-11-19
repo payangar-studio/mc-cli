@@ -5,7 +5,7 @@ The design lives in `payangar-studio/environment`, branch `design`, files 00-cad
 
 ## Layout
 
-`crates/mc-core/` holds what every binary shares: errors, prompts, secrets, platforms, socle mechanics, mod resolution, page model, dedicated server. It names no project type (`crates/mc-core/tests/independence.rs` checks it).
+`crates/mc-core/` holds what every binary shares: errors, prompts, secrets, platforms, socle mechanics, mod resolution, page model, dedicated server. Its code names no socle path of a project type and no type only one binary uses (`crates/mc-core/tests/independence.rs` checks it); the shared skills of `crates/mc-core/templates/socle/` may name each type's files.
 
 - `crates/modpack/src/main.rs`: entry point. Parses the command line, sets up logs, builds the context, calls `cli::run`, maps errors to exit codes.
 - `crates/modpack/src/lib.rs`: module registry, one `pub mod` line per module.

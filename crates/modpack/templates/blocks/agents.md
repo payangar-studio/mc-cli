@@ -12,7 +12,7 @@ This repository is a Minecraft modpack managed with `modpack-cli` (`modpack`). T
 - `overrides/<variant>/config/`: configuration that applies to one variant only, written over `config/`.
 - `page/`: the project page, pushed to the platforms.
 - `audit/last.toml`: the last audit report, written by the `modpack-audit` skill.
-- `.modpack/`, `.claude/skills/modpack-*/`, `.github/workflows/modpack-*.yml` and this block: the socle. `.modpack/README.md` says who owns what.
+- `.modpack/`, `.claude/skills/modpack-*/`, `.claude/skills/mc-*/`, `.github/workflows/modpack-*.yml` and this block: the socle. `.modpack/README.md` says who owns what.
 
 ### Use the CLI, not your hands
 

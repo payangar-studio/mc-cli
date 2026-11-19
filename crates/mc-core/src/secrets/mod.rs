@@ -146,11 +146,12 @@ impl Secrets {
         Ok(value.map(|value| (Secret(value), Source::Keyring)))
     }
 
-    /// The secret, or an error saying how to provide it.
-    pub fn get(&self, name: SecretName) -> Result<Secret> {
+    /// The secret, or an error saying how to provide it; `bin` is the
+    /// binary whose `auth` command the error names (`modpack`).
+    pub fn get(&self, name: SecretName, bin: &str) -> Result<Secret> {
         match self.find(name)? {
             Some((secret, _)) => Ok(secret),
-            None => Err(self.not_found(name)),
+            None => Err(self.not_found(name, bin)),
         }
     }
 
@@ -219,14 +220,14 @@ impl Secrets {
         }
     }
 
-    fn not_found(&self, name: SecretName) -> Error {
+    fn not_found(&self, name: SecretName, bin: &str) -> Error {
         let var = name.env_var();
         match &self.keyring {
             Ok(_) => Error::usage(
                 format!(
                     "secret `{name}` not found: {var} is not set and the system keyring has no `{name}`"
                 ),
-                format!("run `modpack auth {name}`, or set {var}"),
+                format!("run `{bin} auth {name}`, or set {var}"),
             ),
             Err(why) => Error::usage(
                 format!(
@@ -376,7 +377,10 @@ mod tests {
             .set_password("from-keyring")
             .unwrap();
         let secrets = secrets(&[(name.env_var(), "")], Some(store));
-        assert_eq!(secrets.get(name).unwrap().expose(), "from-keyring");
+        assert_eq!(
+            secrets.get(name, "modpack").unwrap().expose(),
+            "from-keyring"
+        );
     }
 
     #[test]
@@ -397,12 +401,12 @@ mod tests {
         let name = SecretName::ModrinthToken;
         assert!(secrets.find(name).unwrap().is_none());
         assert_eq!(secrets.locate(name), Ok(None));
-        let err = secrets.get(name).unwrap_err();
+        let err = secrets.get(name, "mod").unwrap_err();
         assert_eq!(err.kind(), ErrorKind::Usage);
         assert!(err.to_string().contains("modrinth-token"));
         assert_eq!(
             err.hint(),
-            "run `modpack auth modrinth-token`, or set MODPACK_MODRINTH_TOKEN"
+            "run `mod auth modrinth-token`, or set MODPACK_MODRINTH_TOKEN"
         );
     }
 
@@ -410,12 +414,12 @@ mod tests {
     fn without_keyring_the_environment_still_works() {
         let name = SecretName::CurseforgeApiKey;
         let with_env = secrets(&[(name.env_var(), VALUE)], None);
-        assert_eq!(with_env.get(name).unwrap().expose(), VALUE);
+        assert_eq!(with_env.get(name, "modpack").unwrap().expose(), VALUE);
         assert_eq!(with_env.keyring_unavailable(), Some("no Secret Service"));
 
         let without = secrets(&[], None);
         assert_eq!(without.locate(name), Ok(None));
-        let err = without.get(name).unwrap_err();
+        let err = without.get(name, "modpack").unwrap_err();
         assert!(
             err.to_string()
                 .contains("keyring is unavailable (no Secret Service)")
@@ -469,7 +473,7 @@ mod tests {
             .unwrap();
         for failure in failures {
             fail_next(&store, name, failure);
-            let err = secrets.get(name).unwrap_err();
+            let err = secrets.get(name, "modpack").unwrap_err();
             assert_eq!(err.kind(), ErrorKind::Internal);
             assert!(err.to_string().contains("modrinth-token"));
             for shown in [err.to_string(), format!("{err:?}")] {

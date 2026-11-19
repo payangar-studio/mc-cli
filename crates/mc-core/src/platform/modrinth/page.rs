@@ -120,17 +120,29 @@ pub fn push(client: &Client, page: &Page, token: &Secret, listing: &Listing) -> 
 }
 
 /// Writes the project id into the `[modrinth]` table of `page.toml`,
-/// keeping the rest of the file as it is.
+/// keeping the rest of the file as it is. The project already exists, so a
+/// failure gives its id.
 fn record_project_id(root: &Path, id: &str) -> Result<()> {
     let path = root.join(DIR).join(PAGE_TOML);
-    let text = fs::read_to_string(&path).context(format!("reading {DIR}/{PAGE_TOML}"))?;
-    let mut doc: toml_edit::DocumentMut =
-        text.parse().context(format!("parsing {DIR}/{PAGE_TOML}"))?;
+    let text = fs::read_to_string(&path).map_err(not_recorded(id, "reading"))?;
+    let mut doc: toml_edit::DocumentMut = text.parse().map_err(not_recorded(id, "parsing"))?;
     if !doc.contains_table(NAME) {
         doc[NAME] = toml_edit::table();
     }
     doc[NAME]["project_id"] = toml_edit::value(id);
-    fs::write(&path, doc.to_string()).context(format!("writing {DIR}/{PAGE_TOML}"))
+    fs::write(&path, doc.to_string()).map_err(not_recorded(id, "writing"))
+}
+
+/// The error of a created project whose id could not be recorded.
+fn not_recorded<E>(id: &str, doing: &str) -> impl FnOnce(E) -> Error
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let what = format!("created Modrinth project {id}, but {doing} {DIR}/{PAGE_TOML} failed");
+    let hint = format!(
+        "set `project_id = \"{id}\"` in the [{NAME}] table of {DIR}/{PAGE_TOML} by hand before pushing again, or the push creates the project a second time"
+    );
+    move |err| Error::internal(what, hint).with_source(err)
 }
 
 fn sync_icon(api: &Api, remote: &Remote, icon: Option<&Image>) -> Result<bool> {

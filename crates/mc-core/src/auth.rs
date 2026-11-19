@@ -189,7 +189,7 @@ mod tests {
         assert!(!secrets.in_keyring(name).unwrap());
         let message = save(&secrets, name, format!(" {VALUE}\n")).unwrap();
         assert!(!message.contains(VALUE));
-        assert_eq!(secrets.get(name).unwrap().expose(), VALUE);
+        assert_eq!(secrets.get(name, "modpack").unwrap().expose(), VALUE);
     }
 
     #[test]

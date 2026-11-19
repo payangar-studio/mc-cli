@@ -192,7 +192,7 @@ impl Page {
         let body = fs::read_to_string(dir.join(DESCRIPTION)).map_err(|err| {
             Error::usage(
                 format!("cannot read {DIR}/{DESCRIPTION}: {err}"),
-                format!("write the long description of the pack in {DIR}/{DESCRIPTION}"),
+                format!("write the long description of the project in {DIR}/{DESCRIPTION}"),
             )
         })?;
         let icon_path = dir.join(ICON);

@@ -103,10 +103,18 @@ impl Socle {
     }
 
     /// Every file of the socle, its own and the shared ones, sorted by path.
+    /// A socle's own file never takes the path of a shared one: the registry
+    /// would hold that path twice.
     pub fn socle_files(&self) -> Vec<Template> {
         let mut files = files_of(self.files);
         files.extend(files_of(&SHARED));
         files.sort_by(|a, b| a.path.cmp(&b.path));
+        if let Some(pair) = files.windows(2).find(|w| w[0].path == w[1].path) {
+            panic!(
+                "{} is both a file of the {} socle and a shared one",
+                pair[0].path, self.bin
+            );
+        }
         files
     }
 
@@ -479,6 +487,25 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    #[should_panic(
+        expected = ".claude/skills/mc-curseforge-page/SKILL.md is both a file of the test socle and a shared one"
+    )]
+    fn a_socle_file_never_shadows_a_shared_one() {
+        static FILES: Dir<'static> = Dir::new(
+            "",
+            &[include_dir::DirEntry::File(include_dir::File::new(
+                ".claude/skills/mc-curseforge-page/SKILL.md",
+                b"its own",
+            ))],
+        );
+        let socle = Socle {
+            files: &FILES,
+            ..TEST
+        };
+        socle.socle_files();
     }
 
     #[cfg(unix)]

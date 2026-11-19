@@ -424,6 +424,30 @@ title = "Kept"
     assert_eq!(api.requests()[6].headers["content-type"], "image/jpeg");
 }
 
+/// The project exists on Modrinth once created: if its id cannot be written
+/// to `page.toml`, the error gives it, or the next push creates it again.
+#[test]
+fn an_id_that_cannot_be_recorded_is_given_in_the_error() {
+    let dir = repo(PAGE_TOML, None, &[]);
+    fs::remove_file(dir.path().join(DIR).join(ICON)).unwrap();
+    let api = Api::start();
+    api.mount(
+        Mock::given(method("POST"))
+            .and(path("/project"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(project(None, json!([])))),
+    );
+    let page = load(dir.path()).unwrap();
+    fs::remove_file(dir.path().join(DIR).join(super::PAGE_TOML)).unwrap();
+    let err = push(&api.client(), &page, &token(), &MODPACK).unwrap_err();
+    assert_eq!(api.calls(), ["POST /project"]);
+    assert!(err.to_string().contains(ID), "{err}");
+    assert!(
+        err.hint().contains(&format!("project_id = \"{ID}\"")),
+        "{}",
+        err.hint()
+    );
+}
+
 #[test]
 fn creation_needs_a_license_and_sends_nothing_without_it() {
     let dir = repo(&PAGE_TOML.replace("license = \"MIT\"", ""), None, &[]);

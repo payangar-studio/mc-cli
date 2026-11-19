@@ -277,6 +277,39 @@ fn update_removes_a_file_that_left_the_templates() {
     assert!(lock.files.iter().all(|f| f.path != ".modpack/old/hook"));
 }
 
+/// A repository from before the CurseForge page skill was shared: `update`
+/// replaces `modpack-curseforge-page` by `mc-curseforge-page`.
+#[test]
+fn update_replaces_the_modpack_curseforge_page_skill_by_the_shared_one() {
+    let (_tmp, root) = init_repo();
+    make_older(&root);
+    const OLD: &str = ".claude/skills/modpack-curseforge-page/SKILL.md";
+    const NEW: &str = ".claude/skills/mc-curseforge-page/SKILL.md";
+    let content = b"---\nname: modpack-curseforge-page\n---\n";
+    fs::remove_dir_all(root.join(".claude/skills/mc-curseforge-page")).unwrap();
+    fs::create_dir_all(root.join(".claude/skills/modpack-curseforge-page")).unwrap();
+    fs::write(root.join(OLD), content).unwrap();
+    let mut lock = SocleLock::load(&SOCLE, &root).unwrap();
+    lock.files.retain(|f| f.path != NEW);
+    lock.files.push(LockedFile {
+        path: OLD.into(),
+        sha256: sha256_bytes(content),
+        kind: LockedKind::File,
+    });
+    lock.save(&SOCLE, &root).unwrap();
+
+    modpack(&root)
+        .arg("update")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!("Removed {OLD}")));
+    assert!(!root.join(".claude/skills/modpack-curseforge-page").exists());
+    assert!(read(&root, NEW).contains("name: mc-curseforge-page"));
+    let lock = SocleLock::load(&SOCLE, &root).unwrap();
+    assert!(lock.files.iter().all(|f| f.path != OLD));
+    assert!(lock.files.iter().any(|f| f.path == NEW));
+}
+
 #[test]
 fn update_never_touches_the_pack_skeleton() {
     let (_tmp, root) = init_repo();

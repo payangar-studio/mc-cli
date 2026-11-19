@@ -106,7 +106,7 @@ impl Platform for Modrinth {
     }
 
     fn push_page(&self, page: &Page, listing: &Listing) -> Result<String> {
-        let token = Secrets::system().get(SecretName::ModrinthToken)?;
+        let token = Secrets::system().get(SecretName::ModrinthToken, &page.bin)?;
         page::push(&self.client, page, &token, listing)
     }
 

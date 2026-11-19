@@ -287,18 +287,35 @@ fn a_malformed_dependency_is_named() {
 /// The template package of the shared library (`templates/library/`).
 const LIBRARY_PACKAGE: &str = "com.payangar.socle.vendor";
 
+/// The entrypoints of the library's gametests, added to the gametest mod of
+/// `fabric/`, relative to the mod's vendor package.
+const LIBRARY_GAMETEST_ENTRYPOINTS: &[(&str, &str)] = &[
+    ("main", "network.NetworkTestMod"),
+    ("client", "network.NetworkTestModClient"),
+    ("fabric-client-gametest", "network.ConfigSyncClientGameTest"),
+];
+
 /// Copies the shared library and its tests into the generated mod `root`,
-/// with `common/` of the templates as `shared/` of the mod (`common` with two
-/// loaders, the loader's subproject with one), rewriting the template package
-/// to the mod's vendor package. Until `mod init` copies the library itself,
-/// this test does it, and adds JUnit to `shared`.
+/// rewriting the template package to the mod's vendor package: `common/` of
+/// the templates into `shared/` of the mod (`common` with two loaders, the
+/// loader's subproject with one), and `fabric/` and `neoforge/` into the
+/// loader's subproject when the mod has it. Until `mod init` copies the
+/// library itself, this test does it, and lists the library's gametests in
+/// the gametest mod of `fabric/`.
 fn copy_library(root: &Path, shared: &str) {
     let templates = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates/library");
     let package = format!("{PACKAGE}.vendor");
     let mut copied = 0;
     for entry in walk(&templates) {
         let relative = entry.strip_prefix(&templates).unwrap();
-        let target = root.join(library_path(relative, shared, &package));
+        let target = library_path(relative, shared, &package);
+        let subproject = root.join(target.iter().next().unwrap());
+        // The library of a loader the mod does not have; `shared` is always there.
+        if !relative.starts_with("common") && !subproject.is_dir() {
+            continue;
+        }
+        assert!(subproject.is_dir(), "{} is missing", subproject.display());
+        let target = root.join(target);
         let text = fs::read_to_string(&entry).unwrap();
         fs::create_dir_all(target.parent().unwrap()).unwrap();
         fs::write(&target, text.replace(LIBRARY_PACKAGE, &package)).unwrap();
@@ -306,22 +323,22 @@ fn copy_library(root: &Path, shared: &str) {
     }
     assert!(copied > 0, "no library file in {}", templates.display());
 
-    let build = root.join(shared).join("build.gradle.kts");
-    let mut script = fs::read_to_string(&build).unwrap();
-    script.push_str(
-        r#"
-dependencies {
-    "testImplementation"(platform("org.junit:junit-bom:6.1.3"))
-    "testImplementation"("org.junit.jupiter:junit-jupiter")
-    "testRuntimeOnly"("org.junit.platform:junit-platform-launcher")
-}
-
-tasks.named<Test>("test") {
-    useJUnitPlatform()
-}
-"#,
-    );
-    fs::write(&build, script).unwrap();
+    if root.join("fabric").is_dir() {
+        let gametest_mod = root.join("fabric/src/gametest/resources/fabric.mod.json");
+        let text = fs::read_to_string(&gametest_mod)
+            .unwrap_or_else(|e| panic!("{}: {e}", gametest_mod.display()));
+        let mut json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let entrypoints = json["entrypoints"].as_object_mut().unwrap();
+        for (kind, class) in LIBRARY_GAMETEST_ENTRYPOINTS {
+            let list = entrypoints
+                .entry(kind.to_string())
+                .or_insert_with(|| serde_json::json!([]));
+            list.as_array_mut()
+                .unwrap()
+                .push(format!("{package}.{class}").into());
+        }
+        fs::write(&gametest_mod, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+    }
 }
 
 /// Where the library file at `relative` in the templates goes in the mod:
@@ -330,12 +347,16 @@ tasks.named<Test>("test") {
 fn library_path(relative: &Path, shared: &str, package: &str) -> PathBuf {
     let parts: Vec<&str> = relative.iter().map(|p| p.to_str().unwrap()).collect();
     let template: Vec<&str> = LIBRARY_PACKAGE.split('.').collect();
-    assert_eq!(parts[0], "common", "{}", relative.display());
+    let subproject = match parts[0] {
+        "common" => shared,
+        "fabric" | "neoforge" => parts[0],
+        other => panic!("{}: unknown subproject {other}", relative.display()),
+    };
     let start = parts
         .windows(template.len())
         .position(|w| w == template.as_slice())
         .unwrap_or_else(|| panic!("{} is outside {LIBRARY_PACKAGE}", relative.display()));
-    let mut path = PathBuf::from(shared);
+    let mut path = PathBuf::from(subproject);
     path.extend(&parts[1..start]);
     path.extend(package.split('.'));
     path.extend(&parts[start + template.len()..]);
@@ -356,30 +377,65 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// Each library test class ran in `shared` and passed: a green build with no
-/// test run proves nothing.
-fn assert_library_tests_passed(root: &Path, shared: &str) {
-    let results = root.join(shared).join("build/test-results/test");
-    for class in ["ConfigSchemaTest", "ConfigFileTest", "SettingTypeTest"] {
-        let report = results.join(format!("TEST-{PACKAGE}.vendor.config.{class}.xml"));
+/// Each library test class of `classes` (`<package>.<class>` under the
+/// vendor package) ran in `subproject` and passed: a green build with no test
+/// run proves nothing.
+fn assert_library_tests_passed(root: &Path, subproject: &str, classes: &[&str]) {
+    let results = root.join(subproject).join("build/test-results/test");
+    for class in classes {
+        let report = results.join(format!("TEST-{PACKAGE}.vendor.{class}.xml"));
         let text =
             fs::read_to_string(&report).unwrap_or_else(|e| panic!("{}: {e}", report.display()));
         assert!(!text.contains("tests=\"0\""), "{class} ran no test");
         assert!(text.contains("failures=\"0\""), "{text}");
+        assert!(text.contains("errors=\"0\""), "{text}");
     }
 }
 
+/// A line the library's client gametest logs on the dedicated server once an
+/// operator's change is applied, which only that gametest makes.
+const LIBRARY_GAMETEST_MARK: &str =
+    "changed server settings of vendor_network_test: {\"range\":16}";
+
+/// The library's client gametest ran in `:fabric:runClientGameTest`, up to
+/// the operator's change: the socle's own client gametest passes that run as
+/// well, so a green build does not show the library's ran.
+fn assert_library_gametest_ran(root: &Path) {
+    let log = root.join("fabric/build/run/clientGameTest/logs/latest.log");
+    let text = fs::read_to_string(&log).unwrap_or_else(|e| panic!("{}: {e}", log.display()));
+    assert!(
+        text.contains(LIBRARY_GAMETEST_MARK),
+        "the library's client gametest did not run: `{LIBRARY_GAMETEST_MARK}` missing from {}",
+        log.display()
+    );
+}
+
+/// The library tests that need no loader, in `common/` of the templates.
+const COMMON_LIBRARY_TESTS: &[&str] = &[
+    "config.ConfigSchemaTest",
+    "config.ConfigFileTest",
+    "config.ConfigValuesTest",
+    "config.SettingTypeTest",
+    "network.ConfigPayloadsTest",
+    "network.ReceivedConfigTest",
+    "network.SideCheckTest",
+];
+
 /// The shared library compiles in a generated mod for both loaders, and its
-/// unit tests pass there.
+/// tests pass there: unit tests, the server side of the sync on NeoForge
+/// with the game loaded, and a Fabric client gametest on a dedicated server.
+/// The client gametests need a display: Xvfb, as in CI.
 #[test]
-#[ignore = "downloads Gradle, the loaders, Minecraft and JUnit"]
+#[ignore = "downloads Gradle, the loaders, Minecraft and JUnit, and starts the game"]
 fn library_tests_pass_in_a_generated_mod() {
     let (_tmp, root) = init("fabric,neoforge", "both-required");
     copy_library(&root, "common");
-    gradle_ok(&root, &["build"]);
+    gradle_ok(&root, &["build", ":fabric:runClientGameTest"]);
     assert!(jar(&root, "fabric").is_file());
     assert!(jar(&root, "neoforge").is_file());
-    assert_library_tests_passed(&root, "common");
+    assert_library_tests_passed(&root, "common", COMMON_LIBRARY_TESTS);
+    assert_library_tests_passed(&root, "neoforge", &["network.ServerConfigTest"]);
+    assert_library_gametest_ran(&root);
 }
 
 /// A single-loader mod has no `common/`: the library goes into the loader's
@@ -391,6 +447,7 @@ fn library_tests_pass_in_a_single_loader_mod() {
     copy_library(&root, "fabric");
     gradle_ok(&root, &["build"]);
     assert!(!root.join("common").exists());
+    assert!(!root.join("neoforge").exists());
     assert!(jar(&root, "fabric").is_file());
-    assert_library_tests_passed(&root, "fabric");
+    assert_library_tests_passed(&root, "fabric", COMMON_LIBRARY_TESTS);
 }

@@ -1,16 +1,25 @@
 package com.payangar.socle.vendor.config;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -193,6 +202,99 @@ class ConfigFileTest {
         assertEquals(1, loaded.problems().size());
         assertEquals(true, loaded.values().get(showHud));
         assertEquals("{\"show_hud\": false,,,", Files.readString(file));
+    }
+
+    @Test
+    void aFileNotInUtf8IsReportedAndLeftAsItIs() throws IOException {
+        Path file = ConfigFile.clientPath(tmp, "demo");
+        byte[] latin1 = "{\"title\": \"Café\"}".getBytes(StandardCharsets.ISO_8859_1);
+        Files.write(file, latin1);
+        ConfigFile.Loaded loaded = ConfigFile.load(schema, Scope.CLIENT, file);
+
+        assertEquals(1, loaded.problems().size(), loaded.problems().toString());
+        assertTrue(loaded.problems().get(0).contains("is not UTF-8 text"), loaded.problems().get(0));
+        assertEquals("Hello", loaded.values().get(title));
+        assertArrayEquals(latin1, Files.readAllBytes(file));
+    }
+
+    @Test
+    void aBrokenFileIsNotOverwrittenByASave() throws IOException {
+        Path file = ConfigFile.clientPath(tmp, "demo");
+        write(file, "{\"show_hud\": false,,,");
+        ConfigValues values = ConfigFile.load(schema, Scope.CLIENT, file).values();
+        values.set(title, "Changed");
+
+        IOException error = assertThrows(IOException.class, () -> ConfigFile.save(values, file));
+        assertTrue(error.getMessage().contains("Fix it or delete it"), error.getMessage());
+        assertEquals("{\"show_hud\": false,,,", Files.readString(file));
+    }
+
+    @Test
+    void aFolderThatCannotBeWrittenIsReportedAndTheValuesAreUsed() throws IOException {
+        assumeTrue(posix());
+        Path file = ConfigFile.serverPath(tmp, "demo");
+        write(file, "{\"range\": 12}");
+        Path folder = file.getParent();
+        Files.setPosixFilePermissions(folder, PosixFilePermissions.fromString("r-xr-xr-x"));
+        try {
+            assumeFalse(Files.isWritable(folder), "the folder stays writable, as for root");
+            ConfigFile.Loaded loaded = ConfigFile.load(schema, Scope.SERVER, file);
+            assertEquals(12, loaded.values().get(range));
+            assertEquals(1.0, loaded.values().get(speed));
+            assertEquals(1, loaded.problems().size(), loaded.problems().toString());
+            assertTrue(loaded.problems().get(0).contains("could not be written"), loaded.problems().get(0));
+            assertEquals("{\"range\": 12}", Files.readString(file));
+
+            Path missing = folder.resolve("other.json");
+            ConfigFile.Loaded fresh = ConfigFile.load(schema, Scope.SERVER, missing);
+            assertEquals(8, fresh.values().get(range));
+            assertEquals(1, fresh.problems().size(), fresh.problems().toString());
+            assertFalse(Files.exists(missing));
+        } finally {
+            Files.setPosixFilePermissions(folder, PosixFilePermissions.fromString("rwxr-xr-x"));
+        }
+    }
+
+    @Test
+    void aRewriteKeepsThePermissionsOfTheFile() throws IOException {
+        assumeTrue(posix());
+        Path file = ConfigFile.clientPath(tmp, "demo");
+        write(file, "{\"show_hud\": false}");
+        Set<PosixFilePermission> shared = PosixFilePermissions.fromString("rw-rw-r--");
+        Files.setPosixFilePermissions(file, shared);
+        ConfigFile.load(schema, Scope.CLIENT, file);
+
+        assertTrue(read(file).has("title"));
+        assertEquals(shared, Files.getPosixFilePermissions(file));
+    }
+
+    @Test
+    void aNewFileHasTheDefaultPermissions() throws IOException {
+        assumeTrue(posix());
+        Path reference = Files.createFile(tmp.resolve("reference"));
+        Path file = ConfigFile.clientPath(tmp, "demo");
+        ConfigFile.load(schema, Scope.CLIENT, file);
+
+        assertEquals(Files.getPosixFilePermissions(reference), Files.getPosixFilePermissions(file));
+    }
+
+    @Test
+    void aRewriteWritesThroughASymbolicLink() throws IOException {
+        assumeTrue(posix());
+        Path target = tmp.resolve("managed/demo.json");
+        write(target, "{\"show_hud\": false}");
+        Path link = ConfigFile.clientPath(tmp.resolve("config"), "demo");
+        Files.createDirectories(link.getParent());
+        Files.createSymbolicLink(link, target);
+        ConfigFile.load(schema, Scope.CLIENT, link);
+
+        assertTrue(Files.isSymbolicLink(link));
+        assertTrue(read(target).has("title"));
+        assertFalse(read(target).get("show_hud").getAsBoolean());
+    }
+
+    private static boolean posix() {
+        return FileSystems.getDefault().supportedFileAttributeViews().contains("posix");
     }
 
     private static void write(Path file, String text) throws IOException {

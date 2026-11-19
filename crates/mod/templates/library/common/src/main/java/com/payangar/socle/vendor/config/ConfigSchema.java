@@ -67,7 +67,8 @@ public final class ConfigSchema {
          *
          * @throws IllegalArgumentException when the name is not lower case letters, digits and
          *     underscores, is already taken, or the default is out of bounds; or when the setting
-         *     has the server scope and the mod is client only
+         *     has the server scope and the mod is client only, or the client scope and the mod is
+         *     server only
          */
         public <T> Setting<T> define(Setting.Spec<T> spec) {
             if (built) {
@@ -85,6 +86,12 @@ public final class ConfigSchema {
                 throw new IllegalArgumentException(
                         modId + ": setting `" + name + "` has the server scope, but a client-only mod has"
                                 + " client settings only. Declare it with Scope.CLIENT, or change the side"
+                                + " of the mod in mod.toml.");
+            }
+            if (spec.scope() == Scope.CLIENT && !side.allowsClientScope()) {
+                throw new IllegalArgumentException(
+                        modId + ": setting `" + name + "` has the client scope, but a server-only mod has"
+                                + " server settings only. Declare it with Scope.SERVER, or change the side"
                                 + " of the mod in mod.toml.");
             }
             Setting<T> setting = spec.build(modId);

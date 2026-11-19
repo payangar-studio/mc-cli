@@ -20,6 +20,17 @@ class ConfigSchemaTest {
     }
 
     @Test
+    void aServerOnlyModRefusesAClientSetting() {
+        ConfigSchema.Builder config = ConfigSchema.builder("demo", ModSide.SERVER);
+        config.define(Setting.integer("range", Scope.SERVER, 8, 1, 64));
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> config.define(Setting.bool("show_hud", Scope.CLIENT, true)));
+        assertTrue(error.getMessage().contains("`show_hud` has the client scope"), error.getMessage());
+        assertEquals(List.of("range"), names(config.build().settings()));
+    }
+
+    @Test
     void everyOtherSideAcceptsServerSettings() {
         for (ModSide side : List.of(ModSide.SERVER, ModSide.BOTH_REQUIRED, ModSide.BOTH_OPTIONAL)) {
             ConfigSchema.Builder config = ConfigSchema.builder("demo", side);

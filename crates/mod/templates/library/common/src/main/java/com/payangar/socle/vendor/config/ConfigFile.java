@@ -7,14 +7,17 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import java.io.IOException;
+import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFileAttributeView;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -56,19 +59,22 @@ public final class ConfigFile {
      *       type takes the default; both are reported. The file is then written back with the
      *       values in use.
      *   <li>A key no setting of the scope declares is kept as it is.
-     *   <li>A file that is not a JSON object is reported and left untouched; the defaults are used.
+     *   <li>A file that is not a JSON object in UTF-8 is reported and left untouched; the defaults
+     *       are used, and {@link #save} refuses to write them over it.
+     *   <li>A file that cannot be written (read-only folder) is reported; the values read are used.
      * </ul>
      *
      * Each problem is also logged as a warning.
      *
-     * @throws IOException when the file cannot be read or written
+     * @throws IOException when the file exists but cannot be read
      */
     public static Loaded load(ConfigSchema schema, Scope scope, Path file) throws IOException {
         ConfigValues values = new ConfigValues(schema, scope);
         List<String> problems = new ArrayList<>();
         if (!Files.exists(file)) {
-            save(values, file);
-            return new Loaded(values, List.of());
+            writeBack(values, file, problems);
+            report(schema, problems);
+            return new Loaded(values, List.copyOf(problems));
         }
         JsonObject json;
         try {
@@ -77,11 +83,10 @@ public final class ConfigFile {
                 throw new JsonParseException("not a JSON object");
             }
             json = root.getAsJsonObject();
+        } catch (CharacterCodingException e) {
+            return broken(values, file, "is not UTF-8 text");
         } catch (JsonParseException e) {
-            problems.add(file + " is not a JSON object (" + e.getMessage() + "): defaults are used, and the"
-                    + " file is left as it is. Fix it or delete it, then restart.");
-            report(schema, problems);
-            return new Loaded(values, List.copyOf(problems));
+            return broken(values, file, "is not a JSON object (" + e.getMessage() + ")");
         }
 
         boolean changed = false;
@@ -99,7 +104,7 @@ public final class ConfigFile {
             }
         }
         if (changed) {
-            save(values, file);
+            writeBack(values, file, problems);
         }
         report(schema, problems);
         return new Loaded(values, List.copyOf(problems));
@@ -107,21 +112,60 @@ public final class ConfigFile {
 
     /**
      * Writes {@code values} to {@code file}, creating its folder. The file is replaced at once: a
-     * crash while writing leaves the previous one.
+     * crash while writing leaves the previous one. An existing file keeps its permissions, and a
+     * symbolic link is written through, to the file it points to.
+     *
+     * @throws IOException when the file cannot be written, or when {@code values} were loaded from
+     *     a file that could not be read ({@link ConfigValues#fromBrokenFile()}): that file is left
+     *     as it is
      */
     public static void save(ConfigValues values, Path file) throws IOException {
-        Path dir = file.toAbsolutePath().getParent();
+        if (values.fromBrokenFile()) {
+            throw new IOException("The settings of " + values.schema().modId() + " were not read from their"
+                    + " file, which is broken, so " + file + " is left as it is. Fix it or delete it, then"
+                    + " restart.");
+        }
+        boolean exists = Files.exists(file);
+        Path target = exists ? file.toRealPath() : file.toAbsolutePath();
+        Path dir = target.getParent();
         Files.createDirectories(dir);
-        Path temp = Files.createTempFile(dir, file.getFileName().toString(), ".tmp");
+        // Not Files.createTempFile: its file is readable by its owner only, whatever the umask.
+        Path temp = Files.createFile(dir.resolve(target.getFileName() + "." + UUID.randomUUID() + ".tmp"));
         try {
             Files.writeString(temp, GSON.toJson(values.toJson()) + "\n", StandardCharsets.UTF_8);
+            PosixFileAttributeView permissions = Files.getFileAttributeView(target, PosixFileAttributeView.class);
+            if (exists && permissions != null) {
+                Files.setPosixFilePermissions(temp, permissions.readAttributes().permissions());
+            }
             try {
-                Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             } catch (AtomicMoveNotSupportedException e) {
-                Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING);
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
             }
         } finally {
             Files.deleteIfExists(temp);
+        }
+    }
+
+    /** The defaults, for a file that could not be read; it is left as it is. */
+    private static Loaded broken(ConfigValues values, Path file, String why) {
+        values.markFromBrokenFile();
+        List<String> problems = List.of(file + " " + why + ": defaults are used, and the file is left as it"
+                + " is. Fix it or delete it, then restart.");
+        report(values.schema(), problems);
+        return new Loaded(values, problems);
+    }
+
+    /**
+     * Writes back the values in use. The values are valid whether or not this succeeds, so a
+     * failure (a read-only folder) is reported rather than thrown.
+     */
+    private static void writeBack(ConfigValues values, Path file, List<String> problems) {
+        try {
+            save(values, file);
+        } catch (IOException e) {
+            problems.add(file + " could not be written (" + e + "): the values in use stay, and the file"
+                    + " is left as it is.");
         }
     }
 

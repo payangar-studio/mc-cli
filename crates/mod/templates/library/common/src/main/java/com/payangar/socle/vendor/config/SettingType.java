@@ -4,6 +4,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonPrimitive;
 import java.math.BigDecimal;
 import java.util.Locale;
+import java.util.regex.Pattern;
 
 /**
  * The type of a setting: how its value is written to JSON, read back and kept within its bounds.
@@ -107,7 +108,8 @@ public sealed interface SettingType<T>
     /** A finite decimal number between {@code min} and {@code max}, both included. */
     record DecimalType(double min, double max) implements SettingType<Double> {
         public DecimalType {
-            if (!Double.isFinite(min) || !Double.isFinite(max) || min > max) {
+            // Double.compare, not >: Math.clamp refuses a min of 0.0 with a max of -0.0.
+            if (!Double.isFinite(min) || !Double.isFinite(max) || Double.compare(min, max) > 0) {
                 throw new IllegalArgumentException("bounds " + min + " and " + max + " are not a range");
             }
         }
@@ -145,7 +147,8 @@ public sealed interface SettingType<T>
             if (Double.isNaN(value)) {
                 throw new IllegalArgumentException("NaN is not a value of a decimal setting");
             }
-            return Math.clamp(value, min, max);
+            // Kept as it is when within the bounds: Math.clamp takes -0.0 for below a min of 0.0.
+            return value >= min && value <= max ? value : Math.clamp(value, min, max);
         }
     }
 
@@ -211,6 +214,9 @@ public sealed interface SettingType<T>
      * an {@code alpha} channel. Without one, the alpha is always opaque.
      */
     record ColourType(boolean alpha) implements SettingType<Integer> {
+        private static final Pattern OPAQUE = Pattern.compile("#[0-9A-Fa-f]{6}");
+        private static final Pattern TRANSLUCENT = Pattern.compile("#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?");
+
         @Override
         public JsonElement write(Integer value) {
             return new JsonPrimitive(
@@ -223,14 +229,9 @@ public sealed interface SettingType<T>
         public Reading<Integer> read(JsonElement json) {
             if (json.isJsonPrimitive() && json.getAsJsonPrimitive().isString()) {
                 String text = json.getAsString();
-                int digits = text.length() - 1;
-                if (text.startsWith("#") && (digits == 6 || (alpha && digits == 8))) {
-                    try {
-                        int value = Integer.parseUnsignedInt(text.substring(1), 16);
-                        return Reading.valid(digits == 6 ? value | 0xFF000000 : value);
-                    } catch (NumberFormatException e) {
-                        // Reported below.
-                    }
+                if ((alpha ? TRANSLUCENT : OPAQUE).matcher(text).matches()) {
+                    int value = Integer.parseUnsignedInt(text.substring(1), 16);
+                    return Reading.valid(text.length() == 7 ? value | 0xFF000000 : value);
                 }
             }
             return Reading.invalid(json + " is not a colour written " + (alpha ? "#AARRGGBB or #RRGGBB" : "#RRGGBB"));

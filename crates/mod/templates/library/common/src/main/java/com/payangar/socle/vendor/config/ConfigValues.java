@@ -16,6 +16,7 @@ public final class ConfigValues {
     private final Scope scope;
     private final Map<Setting<?>, Object> values = new LinkedHashMap<>();
     private final JsonObject unknown = new JsonObject();
+    private boolean fromBrokenFile;
 
     /** The default values of the settings of {@code scope}. */
     public ConfigValues(ConfigSchema schema, Scope scope) {
@@ -32,6 +33,14 @@ public final class ConfigValues {
 
     public Scope scope() {
         return scope;
+    }
+
+    /**
+     * Whether these are the defaults used in place of a file that could not be read. {@link
+     * ConfigFile#save} refuses them, so that the file is not overwritten.
+     */
+    public boolean fromBrokenFile() {
+        return fromBrokenFile;
     }
 
     public <T> T get(Setting<T> setting) {
@@ -57,6 +66,10 @@ public final class ConfigValues {
             json.add(entry.getKey(), entry.getValue().deepCopy());
         }
         return json;
+    }
+
+    void markFromBrokenFile() {
+        fromBrokenFile = true;
     }
 
     /** Keeps a key of the file that no setting of the scope declares. */

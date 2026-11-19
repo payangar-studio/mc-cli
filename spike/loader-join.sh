@@ -28,7 +28,12 @@ else
   curl -fsSL -o installer.jar "https://maven.neoforged.net/releases/net/neoforged/neoforge/$NEOFORGE/neoforge-$NEOFORGE-installer.jar"
   "$JAVA" -jar installer.jar --install-server server >install.log 2>&1
   START=("@libraries/net/neoforged/neoforge/$NEOFORGE/unix_args.txt" nogui)
-  CLIENT=(neoforge "$MC" "$NEOFORGE")
+  # HeadlessMC cannot resolve NeoForge 26.x builds: the official installer
+  # installs the client into the Minecraft directory, launched by its id.
+  echo '{"profiles":{}}' >mc/launcher_profiles.json
+  "$JAVA" -jar installer.jar --install-client mc >install-client.log 2>&1 || { tail -30 install-client.log; exit 1; }
+  ls mc/versions
+  CLIENT=("neoforge-$NEOFORGE")
 fi
 ts "server installed"
 echo eula=true >server/eula.txt
@@ -74,4 +79,5 @@ wait "$HMC_PID" || ts "headlessmc exited with $?"
 echo stop >&3
 wait "$SERVER_PID" || true
 ts done
-grep -iE "Loading [0-9]+ mods|mods loaded|Found mod" game/logs/latest.log | head -5 || true
+grep -E "joined|lost connection|players online" server/server.log || true
+tail -5 client.log

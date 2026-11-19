@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        loader: [fabric, neoforge]
+        loader: [neoforge]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:

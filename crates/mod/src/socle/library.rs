@@ -17,7 +17,8 @@
 //! - `lang/<locale>.json` holds the library's strings, keys without prefix.
 //!   It is written to `.mod/vendor/lang/`, and the build merges it into the
 //!   mod's language file under `<modid>.vendor.`
-//!   (`build-logic/src/main/kotlin/VendorLang.kt`).
+//!   (`build-logic/src/main/kotlin/VendorLang.kt`);
+//! - a file at the root of `templates/library/` is not copied.
 
 use std::borrow::Cow;
 
@@ -57,6 +58,10 @@ pub fn files(module: &ModToml) -> Result<Vec<Template>> {
             .map(|c| c.as_os_str().to_string_lossy().into_owned())
             .collect();
         let (first, rest) = parts.split_first().expect("a file has a path");
+        if rest.is_empty() {
+            // A file at the root (a README) documents the templates.
+            continue;
+        }
         if rest.starts_with(&["src".to_string(), "gametest".to_string()]) {
             continue;
         }
@@ -215,6 +220,13 @@ mod tests {
         );
     }
 
+    /// The build reads the language files where `mod update` writes them.
+    #[test]
+    fn the_build_reads_the_vendor_lang_dir() {
+        let build = include_str!("../../templates/socle/build-logic/src/main/kotlin/VendorLang.kt");
+        assert!(build.contains(&format!("\"{LANG_DIR}\"")), "{LANG_DIR}");
+    }
+
     #[test]
     fn the_library_gametests_stay_out_of_mods() {
         assert!(LIBRARY.get_dir("fabric/src/gametest").is_some());
@@ -224,7 +236,10 @@ mod tests {
             &[Loader::Neoforge],
         ] {
             let all = paths(loaders);
-            assert!(all.iter().all(|p| !p.contains("/src/gametest/")), "{all:#?}");
+            assert!(
+                all.iter().all(|p| !p.contains("/src/gametest/")),
+                "{all:#?}"
+            );
         }
     }
 

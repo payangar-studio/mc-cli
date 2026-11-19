@@ -80,12 +80,10 @@ pub fn check_version(root: &Path) -> Result<()> {
     SOCLE.check_version::<Versions>(root)
 }
 
-/// Socle files of `module` that already exist in `root` with other contents:
-/// those `init` would overwrite.
-pub fn overwritten(root: &Path, module: &ModToml) -> Result<Vec<String>> {
+/// Those of `files` that already exist in `root` with other contents: the
+/// socle files `init` would overwrite.
+pub fn overwritten(root: &Path, files: Vec<Template>) -> Result<Vec<String>> {
     let mut paths = Vec::new();
-    let mut files = SOCLE.socle_files();
-    files.extend(library::files(module)?);
     for template in files {
         let path = template
             .path

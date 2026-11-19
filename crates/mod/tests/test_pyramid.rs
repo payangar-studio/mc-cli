@@ -104,7 +104,8 @@ fn keep_runs(root: &Path, name: &str) {
 }
 
 /// The JUnit tests of the shared library copied into `subproject` of a mod
-/// with both loaders: one per `@Test` under its `src/test`.
+/// with both loaders: one per `@Test` annotation in the Java sources of its
+/// `src/test/java`.
 fn library_tests(subproject: &str) -> usize {
     fn count(dir: &Path) -> usize {
         let Ok(entries) = fs::read_dir(dir) else {
@@ -114,16 +115,20 @@ fn library_tests(subproject: &str) -> usize {
             .map(|e| e.unwrap().path())
             .map(|path| {
                 if path.is_dir() {
-                    count(&path)
-                } else {
-                    let text = fs::read_to_string(&path).unwrap();
-                    assert!(
-                        !text.contains("@ParameterizedTest") && !text.contains("@TestFactory"),
-                        "{}: count its tests here",
-                        path.display()
-                    );
-                    text.lines().filter(|l| l.trim() == "@Test").count()
+                    return count(&path);
                 }
+                if path.extension().is_none_or(|e| e != "java") {
+                    return 0;
+                }
+                let text = fs::read_to_string(&path).unwrap();
+                assert!(
+                    ["@ParameterizedTest", "@RepeatedTest", "@TestFactory"]
+                        .iter()
+                        .all(|a| !text.contains(a)),
+                    "{}: count its tests here",
+                    path.display()
+                );
+                text.lines().filter(|l| annotated_test(l)).count()
             })
             .sum()
     }
@@ -131,8 +136,25 @@ fn library_tests(subproject: &str) -> usize {
         &Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("templates/library")
             .join(subproject)
-            .join("src/test"),
+            .join("src/test/java"),
     )
+}
+
+#[test]
+fn library_tests_are_counted_by_their_annotation() {
+    assert!(library_tests("common") > 0);
+    assert!(annotated_test("    @Test"));
+    assert!(annotated_test("@Test @Timeout(5)"));
+    assert!(!annotated_test("@TestInstance(Lifecycle.PER_CLASS)"));
+    assert!(!annotated_test("// @Test"));
+}
+
+/// Whether `line` starts with the `@Test` annotation, alone or followed by
+/// others (`@Test @Timeout(5)`).
+fn annotated_test(line: &str) -> bool {
+    line.trim_start()
+        .strip_prefix("@Test")
+        .is_some_and(|rest| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
 }
 
 fn copy_dir(from: &Path, to: &Path) {

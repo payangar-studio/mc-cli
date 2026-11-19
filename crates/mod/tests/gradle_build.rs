@@ -416,6 +416,68 @@ fn the_language_file_merges_the_vendor_keys() {
         let fr = read_json(&built.join("fr_fr.json"));
         assert_eq!(fr.len(), 1, "{loader}: {fr:?}");
     }
+    gradle_ok(&root, &[":fabric:jar", ":neoforge:jar"]);
+    assert_every_language_file_merged(&root);
+}
+
+/// A language file in common's client resources, where client assets often
+/// live: each jar holds it once, merged, and so does every resource folder
+/// a dev run loads the mod from.
+#[test]
+#[ignore = "downloads Gradle, the loaders and Minecraft"]
+fn a_client_language_file_merges_the_vendor_keys() {
+    let (_tmp, root) = init("fabric,neoforge", "both-required");
+    let lang = root.join("common/src/client/resources/assets/swift_blades/lang");
+    fs::create_dir_all(&lang).unwrap();
+    fs::write(
+        lang.join("en_us.json"),
+        r#"{"item.swift_blades.blade": "Swift Blade"}"#,
+    )
+    .unwrap();
+    gradle_ok(&root, &[":fabric:jar", ":neoforge:jar"]);
+    assert_every_language_file_merged(&root);
+}
+
+/// The mod's English file, in each jar and in every resource folder of the
+/// mod's subprojects, holds the vendor keys: a dev run loads the mod from all
+/// of these folders, and the first one holding the file wins.
+fn assert_every_language_file_merged(root: &Path) {
+    const EN: &str = "assets/swift_blades/lang/en_us.json";
+    for loader in ["fabric", "neoforge"] {
+        let path = jar(root, loader);
+        let mut archive = zip::ZipArchive::new(fs::File::open(&path).unwrap()).unwrap();
+        let copies = archive
+            .file_names()
+            .filter(|n| n.as_ref().unwrap() == EN)
+            .count();
+        assert_eq!(copies, 1, "{}: {EN}", path.display());
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut archive.by_name(EN).unwrap(), &mut text).unwrap();
+        let en: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&text).unwrap();
+        assert_eq!(en["item.swift_blades.blade"], "Swift Blade", "{loader}");
+        assert_eq!(
+            en["swift_blades.vendor.config.scope.client"], "Client",
+            "{loader}"
+        );
+    }
+    let mut found = 0;
+    for subproject in ["common", "fabric", "neoforge"] {
+        for set in ["main", "client"] {
+            let file = root.join(format!("{subproject}/build/resources/{set}/{EN}"));
+            if !file.is_file() {
+                continue;
+            }
+            found += 1;
+            let en = read_json(&file);
+            assert_eq!(
+                en["swift_blades.vendor.config.scope.client"],
+                "Client",
+                "{}",
+                file.display()
+            );
+        }
+    }
+    assert!(found > 0, "no resource folder holds {EN}");
 }
 
 /// Replaces the mod's `CommonEntrypoint` with one that builds a config schema

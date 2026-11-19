@@ -300,9 +300,10 @@ impl Socle {
     /// version, and prints what it did.
     ///
     /// 1. Compares the repository's socle version to the CLI's; stops when
-    ///    equal, unless `force`.
+    ///    equal and the files laid out by code have not moved, unless `force`.
     /// 2. Checks every file and block of the registry against its recorded
-    ///    hash; stops on hand edits unless `force`.
+    ///    hash, and every path the socle writes for the first time against
+    ///    the file already there; stops on hand edits unless `force`.
     /// 3. Writes the socle files and blocks, removes those that left the
     ///    socle.
     /// 4. Rewrites the registry and the version.
@@ -310,18 +311,8 @@ impl Socle {
         let mut config = SocleConfig::<I>::load(self, root)?;
         let cli = self.cli_version();
         let check = compare_versions(self, &config.version, &cli)?;
-        match check {
-            // `force` rewrites the socle at the same version: a file deleted
-            // or edited by hand, or a broken registry.
-            VersionCheck::Equal if !force => {
-                println!("The socle is already at version {cli}: nothing to update.");
-                return Ok(());
-            }
-            VersionCheck::Equal => {}
-            VersionCheck::RepoNewer { .. } => {
-                check.enforce(self)?;
-            }
-            VersionCheck::RepoOlder { .. } => {}
+        if let VersionCheck::RepoNewer { .. } = check {
+            check.enforce(self)?;
         }
 
         let old = match SocleLock::load(self, root) {
@@ -332,21 +323,43 @@ impl Socle {
             }
             Err(err) => return Err(err),
         };
+        let files = self.files_in(root)?;
+        // `force` rewrites the socle at the same version: a file deleted or
+        // edited by hand, or a broken registry. Without it, the same version
+        // still lays out again the files whose path or content follow the
+        // repository (a new package, other loaders).
+        if check == VersionCheck::Equal && !force && same_files(&old, &files) {
+            println!("The socle is already at version {cli}: nothing to update.");
+            return Ok(());
+        }
+
+        let mut blocked = Vec::new();
         let edited = self.edited_by_hand(root, &old)?;
         if !edited.is_empty() {
+            blocked.push(format!(
+                "socle files edited by hand since the socle wrote them:{}",
+                list(&edited)
+            ));
+        }
+        let taken = taken(root, &old, &files)?;
+        if !taken.is_empty() {
+            blocked.push(format!(
+                "files the socle now writes already exist with other contents:{}",
+                list(&taken)
+            ));
+        }
+        if !blocked.is_empty() {
+            let what = blocked.join("\n");
             if !force {
                 return Err(Error::blocked(
-                    format!(
-                        "socle files edited by hand since the socle wrote them:{}",
-                        list(&edited)
-                    ),
+                    what,
                     format!(
                         "move your changes out of these files, then rerun `{} update --force` to overwrite them",
                         self.bin
                     ),
                 ));
             }
-            tracing::warn!("overwriting socle files edited by hand:{}", list(&edited));
+            tracing::warn!("{what}\noverwriting them, as --force asks");
         }
 
         let new = self.write_socle(root)?;
@@ -360,9 +373,15 @@ impl Socle {
         let from = std::mem::replace(&mut config.version, cli.to_string());
         config.save(self, root)?;
 
-        println!("Updated the socle from {from} to {cli}.");
+        if from == cli.to_string() {
+            println!(
+                "Laid the socle out again at version {cli}, following the project's settings."
+            );
+        } else {
+            println!("Updated the socle from {from} to {cli}.");
+        }
         for path in removed {
-            println!("Removed {path}, no longer part of the socle.");
+            println!("Removed {path}: the socle no longer writes a file there.");
         }
         Ok(())
     }
@@ -380,6 +399,49 @@ impl Socle {
                 self.hash
             })
     }
+}
+
+/// Whether the files of the registry `lock` are exactly `files`, paths and
+/// contents.
+fn same_files(lock: &SocleLock, files: &[Template]) -> bool {
+    let mut locked: Vec<(&str, &str)> = lock
+        .files
+        .iter()
+        .filter(|f| f.kind == LockedKind::File)
+        .map(|f| (f.path.as_str(), f.sha256.as_str()))
+        .collect();
+    locked.sort();
+    let hashes: Vec<String> = files.iter().map(|t| sha256_bytes(&t.contents)).collect();
+    let mut written: Vec<(&str, &str)> = files
+        .iter()
+        .zip(&hashes)
+        .map(|(t, h)| (t.path.as_str(), h.as_str()))
+        .collect();
+    written.sort();
+    locked == written
+}
+
+/// Paths of `files` the registry `lock` does not hold, where the repository
+/// at `root` already has something else: the project's own files, which the
+/// socle would overwrite.
+fn taken(root: &Path, lock: &SocleLock, files: &[Template]) -> Result<Vec<String>> {
+    let mut taken = Vec::new();
+    for template in files {
+        if lock.files.iter().any(|f| f.path == template.path) {
+            continue;
+        }
+        let path = under(root, &template.path);
+        if path.symlink_metadata().is_err() {
+            continue;
+        }
+        let same = path.is_file()
+            && fs::read(&path).context(format!("reading {}", path.display()))?
+                == *template.contents;
+        if !same {
+            taken.push(template.path.clone());
+        }
+    }
+    Ok(taken)
 }
 
 fn list(paths: &[String]) -> String {

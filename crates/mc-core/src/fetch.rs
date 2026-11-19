@@ -18,7 +18,7 @@ impl Http {
     pub fn new() -> Self {
         let agent = ureq::Agent::config_builder()
             .user_agent(concat!(
-                "payangar-studio/modpack-cli/",
+                "payangar-studio/mc-cli/",
                 env!("CARGO_PKG_VERSION")
             ))
             .build()

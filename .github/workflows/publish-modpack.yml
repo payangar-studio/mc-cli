@@ -15,7 +15,7 @@ on:
   workflow_call:
     inputs:
       modpack-version:
-        description: Release of modpack-cli to run (v0.1.0), or `latest`
+        description: Release of mc-cli to run (v0.4.0), or `latest`
         type: string
         default: latest
       variants:
@@ -52,12 +52,12 @@ permissions:
   id-token: write
 
 env:
-  MODPACK_CLI_REPO: payangar-studio/modpack-cli
+  MC_CLI_REPO: payangar-studio/mc-cli
   # Vault project and folder of the organization CI `ci-minecraft`.
   VAULT_PROJECT: minecraft
   VAULT_ENVIRONMENT: prod
   VAULT_PATH: /app
-  USER_AGENT: payangar-studio/modpack-cli publish-workflow
+  USER_AGENT: payangar-studio/mc-cli publish-workflow
   # The artifacts of `$platform`, as variant and path, the default variant last.
   ARTIFACTS: '[.artifacts[] | select(.platform == $platform)] | sort_by(.variant == "default") | .[] | [.variant, .path] | @tsv'
 
@@ -65,7 +65,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The whole history: the guard compares the tag with origin/main.
           fetch-depth: 0
@@ -100,13 +100,13 @@ jobs:
           WANTED: ${{ inputs.modpack-version }}
         run: |
           if [[ "$WANTED" == latest ]]; then
-            tag=$(gh release view -R "$MODPACK_CLI_REPO" --json tagName -q .tagName)
+            tag=$(gh release view -R "$MC_CLI_REPO" --json tagName -q .tagName)
           else
             tag="v${WANTED#v}"
           fi
-          dir="$RUNNER_TEMP/modpack-cli"
+          dir="$RUNNER_TEMP/mc-cli"
           mkdir -p "$dir/bin"
-          gh release download "$tag" -R "$MODPACK_CLI_REPO" -D "$dir" \
+          gh release download "$tag" -R "$MC_CLI_REPO" -D "$dir" \
             -p "modpack-*-x86_64-unknown-linux-musl.tar.gz" \
             -p "modpack-*-x86_64-unknown-linux-musl.tar.gz.sha256"
           (cd "$dir" && sha256sum -c ./*.sha256)
@@ -286,7 +286,7 @@ jobs:
 
       - name: Keep the packs of a dry run
         if: ${{ inputs.dry-run }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: packs
           path: ${{ runner.temp }}/dist

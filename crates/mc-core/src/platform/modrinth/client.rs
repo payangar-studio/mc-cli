@@ -14,7 +14,7 @@ use ureq::{Agent, Body};
 use crate::error::{Context, Error, Result};
 
 /// Identifies the tool, never the person running it.
-pub const USER_AGENT: &str = concat!("payangar-studio/modpack-cli/", env!("CARGO_PKG_VERSION"));
+pub const USER_AGENT: &str = concat!("payangar-studio/mc-cli/", env!("CARGO_PKG_VERSION"));
 
 /// Retries after a `429 Too Many Requests` before giving up.
 const MAX_RETRIES: u32 = 3;
@@ -223,7 +223,7 @@ mod tests {
 
     #[test]
     fn user_agent_names_the_tool_only() {
-        assert!(USER_AGENT.starts_with("payangar-studio/modpack-cli/"));
+        assert!(USER_AGENT.starts_with("payangar-studio/mc-cli/"));
         assert!(USER_AGENT.ends_with(env!("CARGO_PKG_VERSION")));
     }
 

@@ -466,7 +466,7 @@ fn a_config_file_the_cli_did_not_write_blocks_unless_it_matches() {
     assert_eq!(err.kind(), ErrorKind::Blocked);
     let text = err.to_string();
     assert!(
-        text.contains("1 config file(s) of the instance that modpack-cli did not write")
+        text.contains("1 config file(s) of the instance that mc-cli did not write")
             && text.contains("\n  - config/a.toml"),
         "{text}"
     );

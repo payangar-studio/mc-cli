@@ -110,7 +110,7 @@ pub fn load(ctx: &LoadContext<'_>, variant: &str, force: bool) -> Result<LoadRep
             .collect();
         return Err(Error::blocked(
             format!(
-                "{} file(s) of the instance changed since modpack-cli wrote them:{}",
+                "{} file(s) of the instance changed since mc-cli wrote them:{}",
                 drifted.len(),
                 bullets(&described)
             ),
@@ -182,7 +182,7 @@ pub fn load(ctx: &LoadContext<'_>, variant: &str, force: bool) -> Result<LoadRep
     if !foreign.is_empty() && !force {
         return Err(Error::blocked(
             format!(
-                "{} config file(s) of the instance that modpack-cli did not write differ from the variant's:{}",
+                "{} config file(s) of the instance that mc-cli did not write differ from the variant's:{}",
                 foreign.len(),
                 bullets(&foreign)
             ),

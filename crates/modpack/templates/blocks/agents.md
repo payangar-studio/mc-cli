@@ -1,6 +1,6 @@
 ## Modpack socle
 
-This repository is a Minecraft modpack managed with `modpack-cli` (`modpack`). The repository is the source of the pack; the Modrinth instance on this machine is fed from it, one way only, and the published packs are built from it.
+This repository is a Minecraft modpack managed with `mc-cli` (`modpack`). The repository is the source of the pack; the Modrinth instance on this machine is fed from it, one way only, and the published packs are built from it.
 
 ### What is where
 
@@ -8,7 +8,7 @@ This repository is a Minecraft modpack managed with `modpack-cli` (`modpack`). T
 - `mods/` and `resourcepacks/`: the jars of the mods and the zips of the resource packs, ignored by git. `modpack install` downloads the missing ones, and removes those it downloaded that the manifest no longer lists (recorded in `.modpack/local/`, ignored by git).
 - `mods-local/` and `resourcepacks-local/`: the files no platform serves (an abandoned mod, a development build, a file from its author, the pack's own resource pack), tracked by git. A file dropped there becomes a `local` entry of the manifest; it is published only once approved with `modpack approve <key>`.
 - `config/`: the base configuration, shared by every variant.
-- `variants.toml`: the variants (the default one is the full pack; every other variant removes or adds mods and resource packs by key) and the conditions each variant must meet. Its syntax and every condition with its options: [`variants.toml` reference](https://github.com/payangar-studio/modpack-cli/blob/main/docs/variants.md).
+- `variants.toml`: the variants (the default one is the full pack; every other variant removes or adds mods and resource packs by key) and the conditions each variant must meet. Its syntax and every condition with its options: [`variants.toml` reference](https://github.com/payangar-studio/mc-cli/blob/main/docs/variants.md).
 - `overrides/<variant>/config/`: configuration that applies to one variant only, written over `config/`.
 - `page/`: the project page, pushed to the platforms.
 - `audit/last.toml`: the last audit report, written by the `modpack-audit` skill.

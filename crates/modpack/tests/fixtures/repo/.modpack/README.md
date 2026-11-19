@@ -1,3 +1,3 @@
 # .modpack
 
-Files of the socle, managed by `modpack-cli`. `modpack update` rewrites them.
+Files of the socle, managed by `mc-cli`. `modpack update` rewrites them.

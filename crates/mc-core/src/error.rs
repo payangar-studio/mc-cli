@@ -37,7 +37,7 @@ impl ErrorKind {
 type Source = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 /// Hint given when an error carries no specific advice.
-const DEFAULT_HINT: &str = "check the cause above; if it looks like a bug, report it at https://github.com/payangar-studio/modpack-cli/issues";
+const DEFAULT_HINT: &str = "check the cause above; if it looks like a bug, report it at https://github.com/payangar-studio/mc-cli/issues";
 
 /// An error as shown to the user: what happened, what to do, and the
 /// underlying cause when there is one.

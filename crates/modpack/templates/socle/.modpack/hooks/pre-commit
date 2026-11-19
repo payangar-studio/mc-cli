@@ -1,5 +1,5 @@
 #!/bin/sh
-# Managed by modpack-cli; `modpack update` rewrites this file.
+# Managed by mc-cli; `modpack update` rewrites this file.
 # Regenerates modpack.lock.toml from mods/, resourcepacks/ and their local
 # directories, checks variants.toml against it, and adds it to the commit with
 # the files of mods-local/ and resourcepacks-local/, so that no commit leaves
@@ -8,12 +8,12 @@
 # the platforms are skipped with a warning: the commit goes through.
 
 if ! command -v modpack >/dev/null 2>&1; then
-    echo "modpack-cli: modpack is not in PATH, modpack.lock.toml was not regenerated; install modpack-cli, then run \`modpack manifest\`." >&2
+    echo "mc-cli: modpack is not in PATH, modpack.lock.toml was not regenerated; install mc-cli, then run \`modpack manifest\`." >&2
     exit 0
 fi
 
 if ! modpack manifest </dev/null; then
-    echo "modpack-cli: \`modpack manifest\` failed, the commit is stopped; fix the problem above, or commit with --no-verify to skip this check." >&2
+    echo "mc-cli: \`modpack manifest\` failed, the commit is stopped; fix the problem above, or commit with --no-verify to skip this check." >&2
     exit 1
 fi
 

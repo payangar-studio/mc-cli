@@ -12,9 +12,9 @@ use crate::error::{Error, Result};
 pub const STATE_FILE: &str = ".modpack-state.toml";
 
 const INSTANCES_HEADER: &str =
-    "# Written by modpack-cli: the Modrinth instance of each pack on this machine.\n\n";
+    "# Written by mc-cli: the Modrinth instance of each pack on this machine.\n\n";
 const STATE_HEADER: &str =
-    "# Written by modpack-cli: what it last wrote into this instance. Do not edit by hand.\n\n";
+    "# Written by mc-cli: what it last wrote into this instance. Do not edit by hand.\n\n";
 
 /// `<user config dir>/modpack/instances.toml`: pack name to instance directory.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]

@@ -205,7 +205,7 @@ fn kind_of(class: Option<u32>, query: &str) -> Result<Kind> {
         Some(api::CLASS_RESOURCE_PACKS) => Ok(Kind::Resourcepack),
         _ => Err(Error::usage(
             format!("`{query}` is neither a mod nor a resource pack on CurseForge"),
-            "modpack-cli adds mods and resource packs only",
+            "mc-cli adds mods and resource packs only",
         )),
     }
 }

@@ -162,7 +162,7 @@ impl Platform for Modrinth {
             other => {
                 return Err(Error::usage(
                     format!("`{query}` is a {other} on Modrinth, not a mod nor a resource pack"),
-                    "modpack-cli adds mods and resource packs only",
+                    "mc-cli adds mods and resource packs only",
                 ));
             }
         };

@@ -9,17 +9,21 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: bash scripts/check-test-executables.sh
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      # The runner's rustup, not a third-party action: dtolnay/rust-toolchain
+      # publishes no versioned release to pin.
+      - name: Install the stable Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy --no-self-update
+          rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
@@ -28,6 +32,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check that every action is pinned by commit SHA
+        run: bash scripts/check-workflow-pins.sh
+      - name: Test that check
+        run: bash scripts/test-check-workflow-pins.sh
       # A pinned release, checked against its published checksum. The runner's
       # shellcheck lints the `run` scripts too. The socle's workflow template is
       # linted with this repository's own workflows: it ships into every pack.

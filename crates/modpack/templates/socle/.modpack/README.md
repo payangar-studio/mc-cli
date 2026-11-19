@@ -1,6 +1,6 @@
 # .modpack
 
-This directory belongs to the socle of the modpack, managed by `modpack-cli`.
+This directory belongs to the socle of the modpack, managed by `mc-cli`.
 
 ## Who owns what
 

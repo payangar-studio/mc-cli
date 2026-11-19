@@ -133,7 +133,7 @@ fn instance(
     let platform = registry.find(PACK_PLATFORM).ok_or_else(|| {
         Error::internal(
             format!("platform `{PACK_PLATFORM}` is not built into this CLI"),
-            "report this bug to the modpack-cli maintainers",
+            "report this bug to the mc-cli maintainers",
         )
     })?;
     let pack = Manifest::load(&root.join(manifest::FILE_NAME))?.pack;

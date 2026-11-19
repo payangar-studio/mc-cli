@@ -1,20 +1,20 @@
-# modpack-cli
+# mc-cli
 
 `modpack`, the CLI of the Minecraft modpack socle: it creates a modpack repository, keeps its socle up to date, prepares a clone on a machine, feeds the pack's Modrinth instance and builds the packs. The design lives in `payangar-studio/environment`, `docs/design/00-cadrage.md` and `docs/design/01-socle-modpack.md`.
 
 ## Install
 
-On a machine set up with chezmoi, the catalogue installs `modpack` from this repository's releases. By hand, on Linux x86_64:
+On a machine set up with chezmoi, the catalogue installs `modpack`. Each release of this repository carries every binary of this repository, one archive each, `<binary>-<version>-x86_64-unknown-linux-musl.tar.gz` with its `.sha256`. By hand, on Linux x86_64:
 
 ```sh
-version=0.3.1
-curl -LO "https://github.com/payangar-studio/modpack-cli/releases/download/v$version/modpack-$version-x86_64-unknown-linux-musl.tar.gz"
-curl -LO "https://github.com/payangar-studio/modpack-cli/releases/download/v$version/modpack-$version-x86_64-unknown-linux-musl.tar.gz.sha256"
+version=0.4.0
+curl -LO "https://github.com/payangar-studio/mc-cli/releases/download/v$version/modpack-$version-x86_64-unknown-linux-musl.tar.gz"
+curl -LO "https://github.com/payangar-studio/mc-cli/releases/download/v$version/modpack-$version-x86_64-unknown-linux-musl.tar.gz.sha256"
 sha256sum -c "modpack-$version-x86_64-unknown-linux-musl.tar.gz.sha256"
 tar -xzf "modpack-$version-x86_64-unknown-linux-musl.tar.gz" -C ~/.local/bin
 ```
 
-From source, with a Rust toolchain: `cargo install --git https://github.com/payangar-studio/modpack-cli --locked`.
+From source, with a Rust toolchain: `cargo install --git https://github.com/payangar-studio/mc-cli --locked modpack`.
 
 The Modrinth App must be installed for `modpack setup` to create the pack's instance.
 
@@ -74,7 +74,7 @@ What each pack repository needs, once:
 - repository variables (Settings, Secrets and variables, Actions, Variables): `INFISICAL_URL`, the vault's URL, and `INFISICAL_IDENTITY_ID`, the id of `ci-minecraft`. Neither is a secret; an organization variable does not reach a private repository on GitHub Free. `MODPACK_PUBLISH_VARIANTS` optionally lists the variants to publish, separated by spaces (all variants when unset);
 - the project ids in `page/page.toml`: `[modrinth] project_id`, written by `modpack page push`, and `[curseforge] project_id`, written by the `mc-curseforge-page` skill. A platform whose project id is empty is skipped, with a notice in the run summary, and the run publishes to the others; a platform with a project that refuses a pack still fails the run.
 
-The secrets live in the vault project `minecraft`, environment `prod`, folder `/app`, under the names of the variables the CLI reads: `MC_MODRINTH_TOKEN` and `MC_CURSEFORGE_UPLOAD_TOKEN`. Nothing goes into GitHub secrets. Keep the keys `MODPACK_MODRINTH_TOKEN` and `MODPACK_CURSEFORGE_UPLOAD_TOKEN` next to them, unrenamed, until every pack repository has run `modpack update`: a pack whose socle still pins `publish-modpack.yml@v0.3.1` reads those.
+The secrets live in the vault project `minecraft`, environment `prod`, folder `/app`, under the names of the variables the CLI reads: `MC_MODRINTH_TOKEN` and `MC_CURSEFORGE_UPLOAD_TOKEN`. Nothing goes into GitHub secrets. Keep the keys `MODPACK_MODRINTH_TOKEN` and `MODPACK_CURSEFORGE_UPLOAD_TOKEN` next to them, unrenamed, until every pack repository has run `modpack update`: a pack whose socle still pins `payangar-studio/modpack-cli/.github/workflows/publish-modpack.yml@v0.3.1` reads those.
 
 What gets published:
 
@@ -89,7 +89,7 @@ Running the workflow by hand (Actions, Publish, Run workflow) from the tag publi
 
 ## Development
 
-The repository is a Cargo workspace: `crates/modpack/` builds the `modpack` binary, and `crates/mc-core/` holds the code the CLIs share (secrets, platforms, socle mechanics, mod resolution, dedicated server). `AGENTS.md` describes the layout, the conventions and how to run the tests. Pushing a `v*` tag on this repository publishes a release with the static Linux binary.
+The repository is a Cargo workspace: `crates/modpack/` builds the `modpack` binary, and `crates/mc-core/` holds the code the CLIs share (secrets, platforms, socle mechanics, mod resolution, dedicated server). `AGENTS.md` describes the layout, the conventions and how to run the tests. Pushing a `v*` tag on this repository publishes a release with the static Linux build of every binary.
 
 ## License
 

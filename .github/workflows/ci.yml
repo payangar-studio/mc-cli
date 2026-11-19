@@ -161,3 +161,27 @@ jobs:
           name: mod-sides
           path: ${{ runner.temp }}/mod-sides/
           if-no-files-found: ignore
+
+  # `mod run --server` on a project made by `mod init`: the client, on a
+  # virtual display with software rendering, joins the dev server.
+  mod-run:
+    runs-on: ubuntu-latest
+    env:
+      # Keeps SDL on OpenGL with Mesa's software renderer.
+      SDL_OPENGL_FORCE_SRGB_FRAMEBUFFER: skip
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Install the virtual display and the software renderers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb mesa-vulkan-drivers
+      - name: Install the stable Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo test -p mc-mod --locked --test mod_run -- --ignored --nocapture

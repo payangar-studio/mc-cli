@@ -49,6 +49,20 @@ extensions.configure<NeoForgeExtension> {
             sourceSet(common["client"])
         }
     }
+    // `runClient` and `runServer`, in `run/` or where `mod run` says (Runs.kt).
+    runs {
+        register("client") {
+            client()
+            programArguments.addAll(joinServerArgs)
+        }
+        register("server") {
+            server()
+            programArgument("--nogui")
+        }
+        configureEach {
+            modRunDir?.let { gameDirectory.set(it) }
+        }
+    }
 }
 
 if (hasCommon) {

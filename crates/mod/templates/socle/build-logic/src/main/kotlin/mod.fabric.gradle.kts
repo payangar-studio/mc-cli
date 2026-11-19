@@ -43,6 +43,13 @@ extensions.configure<LoomGradleExtensionAPI> {
             sourceSet("client", project(":common"))
         }
     }
+    // `mod run` (Runs.kt).
+    runs.configureEach {
+        modRunDir?.let { runDirectory.set(it) }
+    }
+    runs.named("client") {
+        programArgs(joinServerArgs)
+    }
 }
 
 dependencies {

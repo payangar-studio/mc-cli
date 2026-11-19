@@ -12,6 +12,7 @@ pub mod init;
 pub mod port;
 pub mod setup;
 pub mod test;
+pub mod run;
 pub mod update;
 
 /// CLI of the Minecraft mod socle.
@@ -53,6 +54,8 @@ pub enum Command {
     Port(port::Args),
     /// Run the side matrix: a dedicated server and a client with different mod sets
     Test(test::Args),
+    /// Run the mod in the game, with extra mods and resource packs from Modrinth
+    Run(run::Args),
 }
 
 pub fn run(command: Command, ctx: &Context) -> Result<()> {
@@ -62,6 +65,7 @@ pub fn run(command: Command, ctx: &Context) -> Result<()> {
         Command::Setup(args) => setup::run(args, ctx),
         Command::Port(args) => port::run(args, ctx),
         Command::Test(args) => test::run(args, ctx),
+        Command::Run(args) => run::run(args, ctx),
     }
 }
 

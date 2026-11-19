@@ -1,6 +1,6 @@
 # Tests of a mod
 
-What `mod init` sets up in a mod repository, and the commands that run it. They are the same locally and in CI (`.github/workflows/mod-tests.yml`). The client runs need Xvfb (`xvfb-run` and `Xvfb`); without it, the client opens a window.
+What `mod init` sets up in a mod repository, and the commands that run it. They are the same locally and in CI (`.github/workflows/mod-tests.yml`). The client runs need Xvfb (`xvfb-run` and `Xvfb`). Without it, the client opens a window and renders on the GPU, so a screenshot comparison can fail on an unchanged mod: the references are software renders (see below).
 
 | Command | Runs |
 |---|---|
@@ -13,7 +13,7 @@ What `mod init` sets up in a mod repository, and the commands that run it. They 
 
 | Layer | Fabric | NeoForge |
 |---|---|---|
-| Unit | `common/src/test/java` (`GameBootstrap.run()` loads the registries); `fabric/src/test/java` runs inside Fabric Loader | `common/src/test/java`; a NeoForge-only mod has them in `neoforge/src/test/java` |
+| Unit | `common/src/test/java` (`GameBootstrap.run()` loads the registries); `fabric/src/test/java` runs inside Fabric Loader, and holds all of them in a Fabric-only mod | `common/src/test/java`; a NeoForge-only mod has them in `neoforge/src/test/java` |
 | Integration | none | `neoforge/src/test/java`, `@ExtendWith(EphemeralTestServerProvider.class)` for a server |
 | Server gametests | `fabric/src/gametest`: `@GameTest` methods of a class listed under `fabric-gametest` in its `fabric.mod.json` | `neoforge/src/gametest`: test functions registered through `RegisterGameTestsEvent` |
 | Client gametests | `fabric/src/gametest`: a `FabricClientGameTest` listed under `fabric-client-gametest` | none |

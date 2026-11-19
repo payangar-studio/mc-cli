@@ -5,7 +5,7 @@ The design lives in `payangar-studio/environment`, branch `design`, files 00-cad
 
 ## Layout
 
-`crates/mc-core/` holds what every binary shares: errors, prompts, secrets, platforms, socle mechanics, mod resolution, page model, dedicated server. It names no project type (`crates/mc-core/tests/independence.rs` checks it), except `crates/mc-core/src/project.rs`, the list of types behind the guard that refuses a repository of another type.
+`crates/mc-core/` holds what every binary shares: errors, prompts, secrets, platforms, socle mechanics, mod resolution, page model, dedicated server. It names no project type (`crates/mc-core/tests/independence.rs` checks it).
 
 - `crates/modpack/src/main.rs`: entry point. Parses the command line, sets up logs, builds the context, calls `cli::run`, maps errors to exit codes.
 - `crates/modpack/src/lib.rs`: module registry, one `pub mod` line per module.
@@ -13,7 +13,7 @@ The design lives in `payangar-studio/environment`, branch `design`, files 00-cad
 - `crates/modpack/src/cli/<command>.rs`: one file per command (`variant load` is `crates/modpack/src/cli/variant_load.rs`), holding its `Args` and its `run(args, ctx)` handler.
 - `crates/mc-core/src/prompt.rs`: "ask, or read the argument". Every value a command needs goes through it, so that every command can run without a terminal.
 - `crates/mc-core/src/error.rs`: error model. Every error says what happened and what to do. Exit codes: 0 success, 1 internal error, 2 usage error (missing argument), 3 blocked (drift or file edited by hand, overridable with `--force`; also a failed `modpack test` condition or a platform `modpack pack` cannot build for).
-- `crates/modpack/src/context.rs`: context passed to handlers (repository found by walking up to `.modpack/` or another type's directory, prompt, verbosity).
+- `crates/modpack/src/context.rs`: context passed to handlers (repository of any type found by walking up to its marker, from `crates/mc-core/src/project.rs`; prompt, verbosity).
 - `crates/modpack/src/socle/`: the modpack socle (`SOCLE`: directory, templates, markers) over the mechanics of `crates/mc-core/src/socle/`, and the socle version check that `Context::require_root` runs for every command working in a repository.
 - `crates/modpack/src/conditions/`: the checks behind `modpack test`. Static ones read the manifest; `server-starts` installs the loader's server once into the machine cache (`<cache dir>/modpack/servers`) through `crates/mc-core/src/server/`, then starts it with the variant's jars and config until `Done`.
 - `crates/modpack/templates/`: templates the binary embeds. `socle/`: files the socle owns, at their path in the pack, rewritten by `update`. `blocks/`: blocks between markers in `AGENTS.md` and `.gitignore`. `project/`: the pack skeleton, written once by `init`. Adding a file to `socle/` or `project/` needs no code change; each issue adds its templates under its own path.

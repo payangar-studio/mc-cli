@@ -36,6 +36,11 @@ pub struct Args {
 
 pub fn run(args: Args, ctx: &Context) -> Result<()> {
     let dir = args.dir;
+    if let Some(other) = mc_core::project::Project::at(&dir)
+        .filter(|p| p.kind != mc_core::project::ProjectType::Modpack)
+    {
+        return Err(other.wrong_type("modpack"));
+    }
     if dir.join(SOCLE_DIR).exists() {
         return Err(Error::usage(
             format!("{} already holds a modpack socle", dir.display()),

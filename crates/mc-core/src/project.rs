@@ -26,6 +26,13 @@ impl ProjectType {
         }
     }
 
+    /// File that marks the root of a repository of this type: the socle
+    /// settings, which every repository of the type holds. A bare directory
+    /// named like the socle's is not enough: `.mod` is a short, generic name.
+    pub fn marker(self) -> String {
+        format!("{}/socle.toml", self.dir())
+    }
+
     /// Binary that works in a repository of this type.
     pub const fn binary(self) -> &'static str {
         match self {
@@ -43,18 +50,23 @@ pub struct Project {
 }
 
 impl Project {
-    /// Walks up from `start` to the first directory that marks the root of
-    /// a repository of any type.
+    /// Walks up from `start` to the first directory that is the root of a
+    /// repository of any type.
     pub fn find(start: &Path) -> Option<Self> {
-        start.ancestors().find_map(|dir| {
-            ProjectType::ALL
-                .into_iter()
-                .find(|kind| dir.join(kind.dir()).is_dir())
-                .map(|kind| Self {
-                    kind,
-                    root: dir.to_path_buf(),
-                })
-        })
+        start.ancestors().find_map(Self::at)
+    }
+
+    /// The repository whose root is `dir`, if any. A command that creates a
+    /// repository checks it, so that one directory never holds the markers
+    /// of two types.
+    pub fn at(dir: &Path) -> Option<Self> {
+        ProjectType::ALL
+            .into_iter()
+            .find(|kind| dir.join(kind.marker()).is_file())
+            .map(|kind| Self {
+                kind,
+                root: dir.to_path_buf(),
+            })
     }
 
     /// Refusal of `binary`, which serves another type, to run in this
@@ -63,9 +75,9 @@ impl Project {
         let own = self.kind.binary();
         Error::usage(
             format!(
-                "{} is a {own} repository ({}/ found), not one `{binary}` works in",
+                "{} is a {own} repository ({} found), not one `{binary}` works in",
                 self.root.display(),
-                self.kind.dir(),
+                self.kind.marker(),
             ),
             format!("use the `{own}` binary here"),
         )
@@ -77,9 +89,14 @@ mod tests {
     use super::*;
     use crate::error::ErrorKind;
 
+    fn mark(dir: &Path, kind: ProjectType) {
+        std::fs::create_dir(dir.join(kind.dir())).unwrap();
+        std::fs::write(dir.join(kind.marker()), "").unwrap();
+    }
+
     fn repo(kind: ProjectType) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join(kind.dir())).unwrap();
+        mark(dir.path(), kind);
         std::fs::create_dir_all(dir.path().join("a/b")).unwrap();
         dir
     }
@@ -100,7 +117,7 @@ mod tests {
     fn the_nearest_repository_wins() {
         let outer = repo(ProjectType::Modpack);
         let inner = outer.path().join("a");
-        std::fs::create_dir(inner.join(".mod")).unwrap();
+        mark(&inner, ProjectType::Mod);
         let found = Project::find(&inner.join("b")).unwrap();
         assert_eq!(found.kind, ProjectType::Mod);
         assert_eq!(found.root, inner);
@@ -116,6 +133,15 @@ mod tests {
     fn a_file_named_like_the_marker_is_not_a_repository() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(".mod"), "").unwrap();
+        assert_eq!(Project::find(dir.path()), None);
+    }
+
+    #[test]
+    fn a_marker_directory_without_socle_settings_is_not_a_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        for kind in ProjectType::ALL {
+            std::fs::create_dir(dir.path().join(kind.dir())).unwrap();
+        }
         assert_eq!(Project::find(dir.path()), None);
     }
 

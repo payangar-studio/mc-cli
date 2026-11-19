@@ -39,12 +39,8 @@ fn the_shared_crate_names_no_modpack_path_nor_type() {
         &mut files,
     );
     assert!(!files.is_empty());
-    // The list of project types, which every binary needs to refuse a
-    // repository of another type.
-    let registry = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/project.rs");
-    assert!(files.contains(&registry));
     let mut found = Vec::new();
-    for file in files.iter().filter(|f| **f != registry) {
+    for file in &files {
         let text = fs::read_to_string(file).unwrap();
         for (n, line) in text.lines().enumerate() {
             let at = format!("{}:{}", file.display(), n + 1);

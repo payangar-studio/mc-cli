@@ -50,7 +50,8 @@ impl Context {
             Some(project) => Err(project.wrong_type(ProjectType::Modpack.binary())),
             None => Err(Error::usage(
                 format!(
-                    "not inside a modpack repository (no {SOCLE_DIR}/ found in this directory or above)"
+                    "not inside a modpack repository (no {} found in this directory or above)",
+                    ProjectType::Modpack.marker()
                 ),
                 "run the command from a modpack repository, or create one with `modpack init`",
             )),
@@ -86,8 +87,11 @@ mod tests {
 
     #[test]
     fn no_root_outside_a_repository() {
-        let ctx = context(&fixtures());
-        assert_eq!(ctx.project, None);
+        let ctx = Context {
+            project: None,
+            prompt: Prompt::new(false),
+            verbosity: 0,
+        };
         let err = ctx.require_root().unwrap_err();
         assert_eq!(err.kind(), ErrorKind::Usage);
         assert!(err.hint().contains("modpack init"));

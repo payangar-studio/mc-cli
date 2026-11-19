@@ -1,6 +1,7 @@
 //! Integration tests of the project type guard: `modpack` refuses to work in
 //! a repository of another type.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
@@ -54,4 +55,25 @@ fn a_command_works_from_a_subdirectory_of_a_modpack_repository() {
         .assert()
         .success()
         .stdout(predicate::str::contains("1 passed, 0 failed"));
+}
+
+#[test]
+fn init_refuses_the_root_of_a_mod_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join(".mod")).unwrap();
+    fs::write(dir.path().join(".mod/socle.toml"), "").unwrap();
+    modpack(dir.path())
+        .arg("init")
+        .args([
+            "--name=Test Pack",
+            "--mc-version=1.21.1",
+            "--loader=neoforge",
+            "--loader-version=21.1.77",
+            "--author=Tester",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("is a mod repository"))
+        .stderr(predicate::str::contains("use the `mod` binary here"));
+    assert!(!dir.path().join(".modpack").exists());
 }

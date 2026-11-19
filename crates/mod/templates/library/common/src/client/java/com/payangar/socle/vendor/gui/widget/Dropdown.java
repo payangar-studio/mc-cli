@@ -87,6 +87,9 @@ public class Dropdown<T> extends Widget {
         private final PopupHost host;
         private int first;
         private int highlighted;
+        /** Where the mouse was at the last frame: only a move highlights the choice under it. */
+        private int lastMouseX = Integer.MIN_VALUE;
+        private int lastMouseY = Integer.MIN_VALUE;
 
         ChoiceList(PopupHost host) {
             super(Dropdown.this.getWidth(), Math.min(choices.size(), VISIBLE_ITEMS) * ITEM_HEIGHT + 2, Dropdown.this.getMessage());
@@ -104,9 +107,11 @@ public class Dropdown<T> extends Widget {
 
         @Override
         protected void draw(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
-            if (isHovered()) {
+            if (isHovered() && (mouseX != lastMouseX || mouseY != lastMouseY)) {
                 highlighted = Math.clamp(indexAt(mouseY), 0, choices.size() - 1);
             }
+            lastMouseX = mouseX;
+            lastMouseY = mouseY;
             Draw.fill(g, getX(), getY(), getWidth(), getHeight(), Theme.SURFACE);
             Draw.outline(g, getX(), getY(), getWidth(), getHeight(), Theme.ACCENT);
             int selected = choices.indexOf(value.get());
@@ -142,6 +147,7 @@ public class Dropdown<T> extends Widget {
         @Override
         public boolean mouseScrolled(double x, double y, double scrollX, double scrollY) {
             first = Math.clamp(first - (int) Math.signum(scrollY), 0, Math.max(0, choices.size() - VISIBLE_ITEMS));
+            highlighted = Math.clamp(indexAt(y), 0, choices.size() - 1);
             return true;
         }
 

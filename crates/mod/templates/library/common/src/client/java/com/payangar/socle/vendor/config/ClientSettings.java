@@ -53,7 +53,7 @@ public final class ClientSettings implements SettingsSource {
 
     /**
      * The values in use, loaded from the file on the first call. A file that cannot be read gives
-     * the defaults; the problem is logged.
+     * the defaults, which {@link #save} never writes over it; the problem is logged.
      */
     @Override
     public synchronized ConfigValues values() {
@@ -62,8 +62,10 @@ public final class ClientSettings implements SettingsSource {
                 values = ConfigFile.load(schema, Scope.CLIENT, file()).values();
             } catch (IOException e) {
                 LoggerFactory.getLogger(schema.modId())
-                        .warn("{} could not be read ({}): the default client settings are used", file(), e.toString());
+                        .warn("{} could not be read ({}): the default client settings are used, and the file is"
+                                + " left as it is", file(), e.toString());
                 values = new ConfigValues(schema, Scope.CLIENT);
+                values.markFromBrokenFile();
             }
         }
         return values;

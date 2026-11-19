@@ -18,7 +18,7 @@ import net.minecraft.network.chat.Component;
 
 /** The widget of a setting in the generated screen, chosen by its type. */
 public final class SettingWidgets {
-    /** The widest whole-number range a slider takes; a wider one is typed. */
+    /** The widest number range a slider takes; a wider one is typed. */
     public static final long SLIDER_RANGE = 1000;
     /** The most choices shown side by side; more go in a dropdown. */
     public static final int SEGMENTS = 3;
@@ -44,8 +44,8 @@ public final class SettingWidgets {
      *
      * <ul>
      *   <li>true or false: a toggle;
-     *   <li>whole number: a slider, typed when its range is wider than {@link #SLIDER_RANGE};
-     *   <li>decimal number: a slider;
+     *   <li>number: a slider, typed when its bounds are equal or its range is wider than {@link
+     *       #SLIDER_RANGE};
      *   <li>choice: a segmented control up to {@link #SEGMENTS} choices, a dropdown beyond;
      *   <li>text: a text field;
      *   <li>colour: a swatch that opens a picker.
@@ -56,10 +56,11 @@ public final class SettingWidgets {
         Component label = label(setting);
         return switch (setting.type()) {
             case SettingType.BooleanType type -> new Toggle(label, (Binding<Boolean>) binding);
-            case SettingType.IntegerType(int min, int max) when (long) max - min <= SLIDER_RANGE ->
+            case SettingType.IntegerType(int min, int max) when min < max && (long) max - min <= SLIDER_RANGE ->
                     Slider.integer(width, label, min, max, (Binding<Integer>) binding);
             case SettingType.IntegerType(int min, int max) -> typedInteger(width, label, min, max, (Binding<Integer>) binding);
-            case SettingType.DecimalType(double min, double max) when min < max ->
+            // Bounds too far apart for a double (±Double.MAX_VALUE) give an infinite range: typed too.
+            case SettingType.DecimalType(double min, double max) when min < max && max - min <= SLIDER_RANGE ->
                     Slider.decimal(width, label, min, max, (Binding<Double>) binding);
             case SettingType.DecimalType type -> typedDecimal(width, label, type, (Binding<Double>) binding);
             case SettingType.EnumType<?> type -> choices(width, label, setting, type, binding);
@@ -80,7 +81,6 @@ public final class SettingWidgets {
                 });
     }
 
-    /** A decimal setting whose bounds are equal: nothing to slide. */
     private static TextField typedDecimal(int width, Component label, SettingType.DecimalType type, Binding<Double> binding) {
         return new TextField(width, label, Binding.of(() -> Double.toString(binding.get()), text -> binding.set(Double.parseDouble(text.trim()))))
                 .validate(text -> {

@@ -18,7 +18,7 @@ import net.minecraft.network.chat.Component;
  * clipboard, input methods) is the vanilla {@link EditBox}'s, without its textured border.
  *
  * <p>With a {@link #validate validator}, text that it refuses is shown with a red border and not
- * written to the value.
+ * written to the value; once the field loses the focus, it shows the value again.
  */
 public class TextField extends Widget {
     private static final int INVALID = 0xFFD9534F;
@@ -95,8 +95,8 @@ public class TextField extends Widget {
     @Override
     protected void draw(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
         String current = Objects.toString(value.get(), "");
-        if (!box.isFocused() && valid.test(box.getValue()) && !box.getValue().equals(current)) {
-            // Changed elsewhere, by a reset for instance.
+        if (!box.isFocused() && !box.getValue().equals(current)) {
+            // Changed elsewhere (a reset), or text refused while it was edited.
             box.setValue(current);
         }
         box.setEditable(active);

@@ -83,10 +83,14 @@ public class ColourPicker extends Container {
         }
     }
 
-    /** Takes the hue, saturation and brightness from the value, when it changed elsewhere. */
+    /**
+     * Takes the hue, saturation and brightness from the value, when it changed elsewhere. Never
+     * during a drag: the hue of a nearly grey colour, rounded to 8 bits per channel, is not the
+     * hue picked.
+     */
     private void sync() {
         int argb = value.get();
-        if (argb == known && dragging == null) {
+        if (dragging != null || argb == known) {
             return;
         }
         known = argb;

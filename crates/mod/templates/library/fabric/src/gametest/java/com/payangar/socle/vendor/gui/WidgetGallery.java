@@ -41,6 +41,8 @@ final class WidgetGallery extends ConfigScreen {
     ButtonWidget button;
     /** The enabled dropdown, which the test opens. */
     Dropdown<String> dropdown;
+    /** The colour picker, which the test drags in. */
+    ColourPicker picker;
 
     WidgetGallery() {
         super(Component.literal("Widget gallery"), null);
@@ -56,7 +58,7 @@ final class WidgetGallery extends ConfigScreen {
                 List.of(Component.literal("First"), Component.literal("Second"), Component.literal("Third")),
                 tab));
         tabs.setPosition(third, y);
-        ColourPicker picker = addRenderableWidget(new ColourPicker(Component.literal("Picker"), colour, true));
+        picker = addRenderableWidget(new ColourPicker(Component.literal("Picker"), colour, true));
         picker.setPosition(third, y + tabs.getHeight() + Theme.PADDING);
         TextField search = addRenderableWidget(new TextField(COLUMN, Component.literal("Search"), Binding.holding(""))
                 .hint(Component.literal("Search...")));

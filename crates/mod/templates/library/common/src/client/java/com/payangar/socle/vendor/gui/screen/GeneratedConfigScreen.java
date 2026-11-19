@@ -25,7 +25,8 @@ import org.slf4j.LoggerFactory;
 /**
  * The config screen drawn from the schema: one tab per scope that has settings, a search over
  * the settings' labels, and a row per setting. The settings of a scope whose source is not
- * editable (server settings for a player who is not an operator) are shown read-only.
+ * editable (server settings for a player who is not an operator) are shown read-only. Settings
+ * whose file could not be read say that a change will not be saved.
  *
  * <p>A change applies to the values at once; closing the screen saves each scope that changed.
  */
@@ -122,6 +123,8 @@ public class GeneratedConfigScreen extends ConfigScreen {
             SettingsSource source = sources.get(scope);
             if (!source.editable()) {
                 panel.add(Label.dim(panel.innerWidth(), Texts.vendor(modId, "config.read_only")));
+            } else if (source.values().fromBrokenFile()) {
+                panel.add(Label.dim(panel.innerWidth(), Texts.vendor(modId, "config.broken_file")));
             }
             for (Setting<?> setting : schema.settings(scope)) {
                 rows.add(panel.add(row(panel.innerWidth(), setting, source, scope)));

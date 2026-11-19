@@ -48,6 +48,7 @@ pub static SOCLE: Socle = Socle {
     files: &FILES,
     blocks: &BLOCKS,
     project: &PROJECT,
+    laid_out: |_| Ok(Vec::new()),
     block_targets: &[
         ("agents.md", "AGENTS.md", HTML),
         ("gitignore", ".gitignore", HASH),
@@ -145,7 +146,7 @@ mod tests {
             .into_iter()
             .find(|t| t.path == "variants.toml")
             .unwrap();
-        let variants = Variants::parse(std::str::from_utf8(template.contents).unwrap()).unwrap();
+        let variants = Variants::parse(std::str::from_utf8(&template.contents).unwrap()).unwrap();
         assert!(variants.conditions.is_empty());
         assert!(variants.default.conditions.is_empty());
         assert!(variants.default.remove.is_empty());

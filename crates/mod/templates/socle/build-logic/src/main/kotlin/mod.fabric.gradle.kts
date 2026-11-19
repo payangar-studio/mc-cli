@@ -93,6 +93,7 @@ val generateModMetadata = tasks.register<Copy>("generateModMetadata") {
     into(layout.buildDirectory.dir("generated/modMetadata"))
 }
 sourceSets["main"].resources.srcDir(generateModMetadata)
+mergeVendorLang(mod.id)
 
 // The tests.
 

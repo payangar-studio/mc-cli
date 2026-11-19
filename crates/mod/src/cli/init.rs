@@ -70,21 +70,6 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
             "move it away, or pick another directory",
         ));
     }
-    let overwritten = crate::socle::overwritten(&dir)?;
-    if !overwritten.is_empty() {
-        let list: String = overwritten.iter().map(|p| format!("\n  - {p}")).collect();
-        if !args.force {
-            return Err(Error::blocked(
-                format!(
-                    "files the socle owns already exist in {}:{list}",
-                    dir.display()
-                ),
-                "move your changes out of these files, then rerun `mod init --force` to overwrite them",
-            ));
-        }
-        tracing::warn!("overwriting files the socle owns:{list}");
-    }
-
     let p = &ctx.prompt;
     let id = p.text(args.id, "--id", "Mod id")?;
     check_id(&id)?;
@@ -145,6 +130,21 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
         loaders,
         license,
     };
+    let overwritten = crate::socle::overwritten(&dir, &module)?;
+    if !overwritten.is_empty() {
+        let list: String = overwritten.iter().map(|p| format!("\n  - {p}")).collect();
+        if !args.force {
+            return Err(Error::blocked(
+                format!(
+                    "files the socle owns already exist in {}:{list}",
+                    dir.display()
+                ),
+                "move your changes out of these files, then rerun `mod init --force` to overwrite them",
+            ));
+        }
+        tracing::warn!("overwriting files the socle owns:{list}");
+    }
+
     std::fs::create_dir_all(&dir).context(format!("creating {}", dir.display()))?;
     git_init(&dir, &minecraft)?;
     crate::socle::init(&dir, &module, pinned.versions())?;

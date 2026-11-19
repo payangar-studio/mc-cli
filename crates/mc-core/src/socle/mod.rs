@@ -12,12 +12,17 @@
 //! - `project`: the skeleton of the project's content, written once by
 //!   `init` when missing, never recorded, never touched again.
 //!
+//! A socle may also lay out files by code (`laid_out`), when their path or
+//! content depend on the repository: they are written, recorded and rewritten
+//! like `files`.
+//!
 //! Every socle also owns the files of [`SHARED`] (`templates/socle/` of this
 //! crate): the skills that serve every project type, such as the CurseForge
 //! page. They are written, recorded and rewritten with the socle's own files.
 
 pub mod blocks;
 
+use std::borrow::Cow;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Once;
@@ -61,6 +66,10 @@ pub struct Socle {
     pub blocks: &'static Dir<'static>,
     /// The skeleton of the project, written once by `init`.
     pub project: &'static Dir<'static>,
+    /// Socle files laid out by code from the repository at the given root,
+    /// which already holds the project's own files. Written, recorded and
+    /// rewritten like `files`.
+    pub laid_out: fn(&Path) -> Result<Vec<Template>>,
     /// Block templates: template file in `blocks`, target file in the
     /// repository, markers in the target's comment syntax.
     pub block_targets: &'static [(&'static str, &'static str, Markers)],
@@ -75,7 +84,7 @@ pub struct Socle {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Template {
     pub path: String,
-    pub contents: &'static [u8],
+    pub contents: Cow<'static, [u8]>,
 }
 
 /// A block to write in a file.
@@ -116,6 +125,22 @@ impl Socle {
             );
         }
         files
+    }
+
+    /// Every socle file of the repository at `root`: [`Socle::socle_files`]
+    /// and those laid out by code, sorted by path. A file laid out by code
+    /// never takes the path of a template.
+    pub fn files_in(&self, root: &Path) -> Result<Vec<Template>> {
+        let mut files = self.socle_files();
+        files.extend((self.laid_out)(root)?);
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        if let Some(pair) = files.windows(2).find(|w| w[0].path == w[1].path) {
+            panic!(
+                "{} is both a template and laid out by code in the {} socle",
+                pair[0].path, self.bin
+            );
+        }
+        Ok(files)
     }
 
     /// Every file of the project skeleton, sorted by path.
@@ -168,7 +193,7 @@ impl Socle {
         for template in self.project_files() {
             let path = under(root, &template.path);
             if !path.exists() {
-                write(&path, template.contents)?;
+                write(&path, &template.contents)?;
             }
         }
         self.write_socle(root)?.save(self, root)?;
@@ -184,10 +209,10 @@ impl Socle {
     /// was written.
     pub fn write_socle(&self, root: &Path) -> Result<SocleLock> {
         let mut lock = SocleLock::default();
-        for template in self.socle_files() {
-            write(&under(root, &template.path), template.contents)?;
+        for template in self.files_in(root)? {
+            write(&under(root, &template.path), &template.contents)?;
             lock.files.push(LockedFile {
-                sha256: sha256_bytes(template.contents),
+                sha256: sha256_bytes(&template.contents),
                 path: template.path,
                 kind: LockedKind::File,
             });
@@ -372,7 +397,7 @@ fn files_of(dir: &'static Dir<'static>) -> Vec<Template> {
                 .join("/");
             out.push(Template {
                 path,
-                contents: file.contents(),
+                contents: Cow::Borrowed(file.contents()),
             });
         }
         for sub in dir.dirs() {
@@ -466,6 +491,7 @@ pub(crate) static TEST: Socle = {
         files: &EMPTY,
         blocks: &EMPTY,
         project: &EMPTY,
+        laid_out: |_| Ok(Vec::new()),
         block_targets: &[],
         html: Markers {
             begin: "<!-- test:begin -->",
@@ -491,7 +517,7 @@ mod tests {
             .iter()
             .find(|t| t.path == ".claude/skills/mc-curseforge-page/SKILL.md")
             .expect("the CurseForge page skill is shared");
-        let text = std::str::from_utf8(skill.contents).unwrap();
+        let text = std::str::from_utf8(&skill.contents).unwrap();
         assert!(text.starts_with("---\nname: mc-curseforge-page\ndescription: "));
         assert!(text.contains("Use when"));
         assert!(!text.contains('\u{2014}'));

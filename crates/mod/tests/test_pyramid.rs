@@ -293,14 +293,14 @@ fn a_changed_render_fails_the_screenshot_test() {
 }
 
 /// The shared library's config screens on a Fabric client
-/// (`ConfigScreenClientGameTest`, copied with the library): the generated
+/// (`ConfigScreenClientGameTest`, which the test adds to the mod): the generated
 /// screen and the widget states match their reference renders, and settings
 /// changed with the mouse and the keyboard reach the JSON file.
 #[test]
 #[ignore = "downloads Gradle, the loaders and Minecraft, starts the game"]
 fn library_config_screens_pass_on_a_client() {
     let (_tmp, root) = init("fabric,neoforge", "both-required");
-    library::copy(&root, "swift_blades", "com.payangar.swiftblades", "common");
+    library::copy_gametests(&root, "com.payangar.swiftblades");
     let output = gradle(&root, &[":fabric:runClientGameTest"]);
     keep_runs(&root, "library_config_screens_pass_on_a_client");
     assert!(

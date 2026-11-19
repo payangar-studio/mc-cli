@@ -1,5 +1,5 @@
 # The project page, pushed to each platform by `modpack page push` (Modrinth)
-# or by the `modpack-curseforge-page` skill (CurseForge). The long description
+# or by the `mc-curseforge-page` skill (CurseForge). The long description
 # is `description.md`, the icon `icon.png` (optional, square), the screenshots
 # `gallery/` with their titles and order in `gallery/gallery.toml`.
 
@@ -30,7 +30,7 @@ additional_categories = []
 license = ""
 
 [curseforge]
-# Written by the `modpack-curseforge-page` skill when it creates the project.
+# Written by the `mc-curseforge-page` skill when it creates the project.
 project_id = ""
 # Main category first, then the others, as named on CurseForge.
 categories = []

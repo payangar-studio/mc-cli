@@ -113,7 +113,7 @@ fn declares_its_capabilities() {
     assert_eq!(cf.capability(Operation::Identify), Capability::Api);
     assert_eq!(
         cf.capability(Operation::PushPage),
-        Capability::Skill("modpack-curseforge-page")
+        Capability::Skill("mc-curseforge-page")
     );
 }
 

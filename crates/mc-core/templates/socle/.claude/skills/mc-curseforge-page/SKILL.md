@@ -1,6 +1,6 @@
 ---
-name: modpack-curseforge-page
-description: Create or update the CurseForge project page of this modpack from the versioned page in `page/`, by driving a real Chrome with the `agent-chrome` skill. Use when `modpack page push` says to run `modpack-curseforge-page`, or when asked to create the CurseForge project, or to bring its page (description, summary, logo, screenshots, links, categories, license) in line with `page/`. Not for publishing a version of the pack, which CI does by API.
+name: mc-curseforge-page
+description: Create or update the CurseForge project page of this mod or modpack from the versioned page in `page/`, by driving a real Chrome with the `agent-chrome` skill. Use when `mod page push` or `modpack page push` says to run `mc-curseforge-page`, or when asked to create the CurseForge project, or to bring its page (description, summary, logo, screenshots, links, categories, license) in line with `page/`. Not for publishing a version, which CI does by API.
 ---
 
 # CurseForge project page
@@ -13,17 +13,30 @@ says, nothing more.
 Never run this in CI. It needs a person nearby for anything that only they
 can do.
 
+## What the repository is
+
+The directory at the root of the repository says what the project is:
+
+| Root holds | Project | CurseForge class | Name when `page.toml` has none |
+|---|---|---|---|
+| `.mod/` | a mod | Mods | `name` in `mod.toml` |
+| `.modpack/` | a modpack | Modpacks | `name` in `.modpack/socle.toml` |
+
 ## What `page/` holds
 
 | File | CurseForge field |
 |---|---|
-| `page/page.toml`, `name` | Project name. Empty: the `name` in `.modpack/socle.toml`. |
+| `page/page.toml`, `name` | Project name. Empty: the name of the table above. |
 | `page/page.toml`, `summary` | Summary. |
 | `page/description.md` | Description (Markdown). |
 | `page/icon.png` | Logo, when present. |
 | `page/gallery/` and `gallery/gallery.toml` | Images: listed ones first, in their order, with title and description, then the other images by file name. |
 | `page/page.toml`, `[links]` | Source, issues, wiki and Discord links, where CurseForge has a field for them. An empty link is left empty. |
 | `page/page.toml`, `[curseforge]` | `project_id` (written by this skill), `categories` (main one first), `license`. |
+
+For a mod, `mod.toml` also says where it runs (`side`: `client`, `server`,
+`both-required`, `both-optional`). If CurseForge asks about it, answer from
+`side`; if its choices do not fit, stop and ask the person.
 
 Read all of it before opening the browser. If `summary`, `categories` or
 `license` in `[curseforge]` is empty, stop and ask the person for the
@@ -40,11 +53,11 @@ missing values, then write them into `page/page.toml`.
      console.
    - It is empty: look for a project with the same name first, in case it
      was created without its id being recorded. If there is one, ask the
-     person whether it is this pack's project before using it.
-   - None: create one. Game Minecraft, class Modpacks, then fill the fields
-     below. Before the final "create" or "submit" button, show the person
-     what is about to be sent and wait for their go: creating a project
-     starts CurseForge's moderation.
+     person whether it is this project before using it.
+   - None: create one. Game Minecraft, class from the table above, then
+     fill the fields below. Before the final "create" or "submit" button,
+     show the person what is about to be sent and wait for their go:
+     creating a project starts CurseForge's moderation.
 3. **Fill the fields** from the table above. Take the description from
    `page/description.md` as is, in the Markdown mode of the editor when it
    offers one. Choose categories and license by the names in
@@ -73,7 +86,8 @@ Stop and hand over to the person, saying exactly what is needed, when:
 
 - the site asks to sign in, confirm an email, solve a captcha, accept terms
   or validate anything on the account;
-- a field CurseForge requires has no value in `page/`;
+- a field CurseForge requires has no value in `page/` (or, for a mod, in
+  `mod.toml`);
 - an action cannot be undone (creating, submitting for review, deleting the
   project or an image the person may want to keep);
 - the page looks different from what these steps describe: describe what

@@ -1,15 +1,19 @@
 //! The project page, as versioned in `page/`: `page.toml` (name, summary,
 //! links, one table per platform), `description.md`, `icon.png` and
 //! `gallery/` with its optional `gallery.toml`. Each platform pushes it its
-//! own way.
+//! own way; [`push`] is the `page push` command of every binary.
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use sha1::{Digest, Sha1};
 
 use crate::error::{Context, Error, Result};
+use crate::model::entry::Env;
+use crate::model::side::Side;
+use crate::platform::{Capability, Operation, Platform, Registry, unsupported};
 
 /// Directory of the page, relative to the repository root.
 pub const DIR: &str = "page";
@@ -32,6 +36,9 @@ pub const IMAGE_TYPES: &[(&str, &str)] = &[
 pub struct Page {
     /// The repository root.
     pub root: PathBuf,
+    /// The binary of the repository's type (`modpack`), as messages name
+    /// its commands.
+    pub bin: String,
     pub name: String,
     pub summary: String,
     pub body: String,
@@ -39,6 +46,41 @@ pub struct Page {
     pub modrinth: ModrinthSection,
     pub icon: Option<Image>,
     pub gallery: Vec<GalleryImage>,
+}
+
+/// What a project is, as the platforms file it: set when the project is
+/// created, never changed by a later push.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Listing {
+    pub project_type: ProjectType,
+    /// What each side needs to run the project.
+    pub env: Env,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectType {
+    Mod,
+    Modpack,
+}
+
+impl ProjectType {
+    /// How the platforms (Modrinth's `project_type`) and messages name it.
+    pub fn name(self) -> &'static str {
+        match self {
+            ProjectType::Mod => "mod",
+            ProjectType::Modpack => "modpack",
+        }
+    }
+}
+
+impl Listing {
+    /// A mod, whose sides follow the `side` of its `mod.toml`.
+    pub fn of_mod(side: Side) -> Self {
+        Self {
+            project_type: ProjectType::Mod,
+            env: side.env(),
+        }
+    }
 }
 
 /// `page/page.toml`. Other platforms' tables are left to them.
@@ -150,7 +192,7 @@ impl Page {
         let body = fs::read_to_string(dir.join(DESCRIPTION)).map_err(|err| {
             Error::usage(
                 format!("cannot read {DIR}/{DESCRIPTION}: {err}"),
-                format!("write the long description of the pack in {DIR}/{DESCRIPTION}"),
+                format!("write the long description of the project in {DIR}/{DESCRIPTION}"),
             )
         })?;
         let icon_path = dir.join(ICON);
@@ -160,6 +202,7 @@ impl Page {
             .transpose()?;
         Ok(Self {
             root: root.to_path_buf(),
+            bin: bin.to_owned(),
             name,
             summary,
             body,
@@ -169,6 +212,60 @@ impl Page {
             gallery: read_gallery(&dir.join(GALLERY_DIR))?,
         })
     }
+}
+
+/// `<bin> page push`: pushes the page to `only`, or to every platform of
+/// `registry`. A platform with an API pushes it and its report goes to
+/// `out`; for one that goes through a skill, `out` names the skill. The page
+/// is read by `load`, once, when the first platform with an API needs it.
+pub fn push<P: ?Sized + Platform>(
+    registry: &Registry<P>,
+    only: Option<&str>,
+    load: impl FnOnce() -> Result<Page>,
+    listing: &Listing,
+    out: &mut impl Write,
+) -> Result<()> {
+    let platforms = match only {
+        Some(name) => vec![registry.get(name)?],
+        None => registry.all().collect(),
+    };
+    let mut load = Some(load);
+    let mut page = None;
+    for platform in platforms {
+        let name = platform.name();
+        match platform.capability(Operation::PushPage) {
+            Capability::Api => {
+                if let Some(load) = load.take() {
+                    page = Some(load()?);
+                }
+                let page = page
+                    .as_ref()
+                    .expect("the page is read before the first push");
+                writeln!(out, "{}", platform.push_page(page, listing)?)?;
+            }
+            Capability::Skill(skill) => writeln!(
+                out,
+                "{name}: no API for the page; run the `{skill}` skill to push it"
+            )?,
+            Capability::Unsupported if only.is_some() => {
+                return Err(unsupported(name, Operation::PushPage));
+            }
+            Capability::Unsupported => writeln!(out, "{name}: no project page, skipped")?,
+        }
+    }
+    Ok(())
+}
+
+/// Refuses `<bin> page push` when `ci` (the `CI` variable) says it runs in
+/// CI: the project page is managed in a session, never in CI.
+pub fn refuse_in_ci(ci: Option<&str>, bin: &str) -> Result<()> {
+    if ci.is_some_and(|v| !v.is_empty() && v != "false" && v != "0") {
+        return Err(Error::usage(
+            format!("`{bin} page push` manages the project page, which is never done in CI"),
+            "run it in a session, from your own machine",
+        ));
+    }
+    Ok(())
 }
 
 impl Image {
@@ -283,4 +380,140 @@ fn non_empty(text: String) -> Option<String> {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+    use crate::error::ErrorKind;
+    use crate::platform::fake::FakePlatform;
+
+    /// A platform whose page capability is given, recording the pushes.
+    struct Recorder {
+        name: &'static str,
+        capability: Capability,
+        pushed: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Platform for Recorder {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn capability(&self, _: Operation) -> Capability {
+            self.capability.clone()
+        }
+        fn push_page(&self, page: &Page, listing: &Listing) -> Result<String> {
+            self.pushed.lock().unwrap().push(format!(
+                "{} {} {}",
+                self.name,
+                page.name,
+                listing.project_type.name()
+            ));
+            Ok(format!("{}: pushed", self.name))
+        }
+    }
+
+    fn registry(pushed: &Arc<Mutex<Vec<String>>>) -> Registry {
+        Registry::new(vec![
+            Box::new(Recorder {
+                name: "api",
+                capability: Capability::Api,
+                pushed: pushed.clone(),
+            }),
+            Box::new(FakePlatform::new("fake")),
+            Box::new(Recorder {
+                name: "none",
+                capability: Capability::Unsupported,
+                pushed: pushed.clone(),
+            }),
+        ])
+    }
+
+    fn page() -> Page {
+        Page {
+            root: PathBuf::from("/repo"),
+            bin: "test".into(),
+            name: "Swift Blades".into(),
+            summary: "Faster swords.".into(),
+            body: String::new(),
+            links: Links::default(),
+            modrinth: ModrinthSection::default(),
+            icon: None,
+            gallery: Vec::new(),
+        }
+    }
+
+    /// Pushes with a page loader that counts its calls.
+    fn run_push(registry: &Registry, only: Option<&str>) -> (Result<()>, String, usize) {
+        let mut out = Vec::new();
+        let mut loads = 0;
+        let listing = Listing::of_mod(Side::BothRequired);
+        let result = push(
+            registry,
+            only,
+            || {
+                loads += 1;
+                Ok(page())
+            },
+            &listing,
+            &mut out,
+        );
+        (result, String::from_utf8(out).unwrap(), loads)
+    }
+
+    #[test]
+    fn every_platform_gets_the_page_its_own_way() {
+        let pushed = Arc::default();
+        let (result, out, loads) = run_push(&registry(&pushed), None);
+        result.unwrap();
+        assert_eq!(*pushed.lock().unwrap(), ["api Swift Blades mod"]);
+        assert_eq!(loads, 1);
+        assert_eq!(
+            out,
+            "api: pushed\n\
+             fake: no API for the page; run the `modpack-fake-page` skill to push it\n\
+             none: no project page, skipped\n"
+        );
+    }
+
+    #[test]
+    fn platform_option_pushes_to_that_platform_only() {
+        let pushed = Arc::default();
+        let registry = registry(&pushed);
+
+        let (result, out, loads) = run_push(&registry, Some("fake"));
+        result.unwrap();
+        assert!(pushed.lock().unwrap().is_empty());
+        assert!(out.contains("`modpack-fake-page`"));
+        // A skill reads the page itself: the CLI does not need it.
+        assert_eq!(loads, 0);
+
+        let (result, out, _) = run_push(&registry, Some("api"));
+        result.unwrap();
+        assert_eq!(*pushed.lock().unwrap(), ["api Swift Blades mod"]);
+        assert_eq!(out, "api: pushed\n");
+    }
+
+    #[test]
+    fn named_platform_must_exist_and_support_the_page() {
+        let pushed = Arc::default();
+        let registry = registry(&pushed);
+        let (result, _, _) = run_push(&registry, Some("nope"));
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::Usage);
+        let (result, _, _) = run_push(&registry, Some("none"));
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("does not support `push_page`"));
+    }
+
+    #[test]
+    fn refused_in_ci() {
+        let err = refuse_in_ci(Some("true"), "mod").unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Usage);
+        assert!(err.to_string().contains("`mod page push`"));
+        assert!(refuse_in_ci(Some("false"), "mod").is_ok());
+        assert!(refuse_in_ci(Some(""), "mod").is_ok());
+        assert!(refuse_in_ci(None, "mod").is_ok());
+    }
 }

@@ -91,7 +91,6 @@ fn fake_eligibility_and_pack() {
         .unwrap();
     assert_eq!(path, dir.path().join("test-default-1.0.0.fake"));
     assert!(fs::read_to_string(path).unwrap().contains("mod sodium"));
-    assert!(p.push_page(Path::new(".")).is_err());
 }
 
 /// A platform that implements nothing.
@@ -110,10 +109,18 @@ impl PackPlatform for Bare {}
 
 #[test]
 fn unimplemented_pack_operations_fail_with_a_clear_error() {
-    let err = Bare.push_page(Path::new(".")).unwrap_err();
+    let err = Bare.build_pack(&PackBuild {
+        name: "Test",
+        version: "1.0.0",
+        pack: &pack(),
+        entries: Vec::new(),
+        overrides: Vec::new(),
+        out_dir: Path::new("."),
+        file_stem: "test",
+    });
     assert_eq!(
-        err.to_string().lines().next().unwrap(),
-        "error: platform `bare` does not support `push_page`"
+        err.unwrap_err().to_string().lines().next().unwrap(),
+        "error: platform `bare` does not support `build_pack`"
     );
     assert!(
         Bare.pack_eligibility(&fake_entry(&fake(), "sodium"))
@@ -144,13 +151,6 @@ fn modrinth_eligibility_follows_the_download_hosts() {
         panic!("a mod hosted elsewhere must be embedded");
     };
     assert!(reason.contains("embedded"));
-}
-
-#[test]
-fn modrinth_push_page_without_a_page_says_where_it_is_expected() {
-    let dir = tempfile::tempdir().unwrap();
-    let err = Modrinth::default().push_page(dir.path()).unwrap_err();
-    assert!(err.to_string().contains("cannot read page/page.toml"));
 }
 
 /// The reason CurseForge gives for an entry without CurseForge ids.

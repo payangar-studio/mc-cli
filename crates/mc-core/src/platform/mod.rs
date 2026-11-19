@@ -9,8 +9,8 @@
 //! Each platform owns the table named after it in every entry
 //! ([`Entry::platforms`]); nobody else reads or writes it.
 //!
-//! The operations only one project type needs (building a modpack, pushing
-//! its page) are declared by that type's binary, in a trait built on
+//! The operations only one project type needs (building a modpack) are
+//! declared by that type's binary, in a trait built on
 //! [`Platform`], over a registry of that trait: [`Registry`] takes the trait
 //! object it holds as a parameter.
 
@@ -20,6 +20,7 @@ use std::path::PathBuf;
 
 use crate::error::{Error, Result};
 use crate::model::entry::{Entry, Kind, Pack};
+use crate::page::{Listing, Page};
 
 pub mod curseforge;
 #[cfg(any(test, feature = "fake"))]
@@ -183,6 +184,13 @@ pub trait Platform: Send + Sync {
     fn download(&self, entry: &Entry) -> Result<Download> {
         let _ = entry;
         Err(unsupported(self.name(), Operation::Download))
+    }
+
+    /// Pushes `page` to the platform, creating the project as `listing`
+    /// says when it has none yet, and returns a line saying what was done.
+    fn push_page(&self, page: &Page, listing: &Listing) -> Result<String> {
+        let _ = (page, listing);
+        Err(unsupported(self.name(), Operation::PushPage))
     }
 }
 

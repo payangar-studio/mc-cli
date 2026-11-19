@@ -72,7 +72,7 @@ Pushing a `v*` tag on `main` of the pack:
 What each pack repository needs, once:
 
 - repository variables (Settings, Secrets and variables, Actions, Variables): `INFISICAL_URL`, the vault's URL, and `INFISICAL_IDENTITY_ID`, the id of `ci-minecraft`. Neither is a secret; an organization variable does not reach a private repository on GitHub Free. `MODPACK_PUBLISH_VARIANTS` optionally lists the variants to publish, separated by spaces (all variants when unset);
-- the project ids in `page/page.toml`: `[modrinth] project_id`, written by `modpack page push`, and `[curseforge] project_id`, written by the `modpack-curseforge-page` skill. A platform whose project id is empty is skipped, with a notice in the run summary, and the run publishes to the others; a platform with a project that refuses a pack still fails the run.
+- the project ids in `page/page.toml`: `[modrinth] project_id`, written by `modpack page push`, and `[curseforge] project_id`, written by the `mc-curseforge-page` skill. A platform whose project id is empty is skipped, with a notice in the run summary, and the run publishes to the others; a platform with a project that refuses a pack still fails the run.
 
 The secrets live in the vault project `minecraft`, environment `prod`, folder `/app`, under the names of the variables the CLI reads: `MC_MODRINTH_TOKEN` and `MC_CURSEFORGE_UPLOAD_TOKEN`. Nothing goes into GitHub secrets. Keep the keys `MODPACK_MODRINTH_TOKEN` and `MODPACK_CURSEFORGE_UPLOAD_TOKEN` next to them, unrenamed, until every pack repository has run `modpack update`: a pack whose socle still pins `publish-modpack.yml@v0.3.1` reads those.
 

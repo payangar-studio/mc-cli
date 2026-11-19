@@ -12,7 +12,7 @@ This repository is a Minecraft modpack managed with `modpack-cli` (`modpack`). T
 - `overrides/<variant>/config/`: configuration that applies to one variant only, written over `config/`.
 - `page/`: the project page, pushed to the platforms.
 - `audit/last.toml`: the last audit report, written by the `modpack-audit` skill.
-- `.modpack/`, `.claude/skills/modpack-*/`, `.github/workflows/modpack-*.yml` and this block: the socle. `.modpack/README.md` says who owns what.
+- `.modpack/`, `.claude/skills/modpack-*/`, `.claude/skills/mc-*/`, `.github/workflows/modpack-*.yml` and this block: the socle. `.modpack/README.md` says who owns what.
 
 ### Use the CLI, not your hands
 
@@ -55,4 +55,4 @@ A resource pack is put in the instance's `resourcepacks/`, not enabled: the play
 - `modpack-return`: bring what changed in the instance back into the repository (mods and resource packs tried from the app, configuration changed in game).
 - `modpack-audit`: audit what changed since the last audit (new mods, known conflicts, sources, platforms, orphan configuration).
 - `modpack-source`: read the source code of a mod, on the version the pack runs.
-- `modpack-curseforge-page`: create or update the CurseForge project page from `page/`.
+- `mc-curseforge-page`: create or update the CurseForge project page from `page/`.

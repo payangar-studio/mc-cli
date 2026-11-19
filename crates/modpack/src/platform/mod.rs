@@ -1,11 +1,10 @@
 //! The platforms as the modpack CLI uses them: the shared contract
 //! ([`mc_core::platform`]), and the operations only a modpack needs, in
 //! [`PackPlatform`]: checking that a mod can go into a pack, building the
-//! pack, pushing the pack's page.
+//! pack.
 
 mod curseforge_pack;
 mod mrpack;
-mod page_push;
 
 use std::path::{Path, PathBuf};
 
@@ -18,7 +17,6 @@ pub use mc_core::platform::{
 
 use crate::error::Result;
 use crate::model::manifest::{Entry, Pack};
-use crate::secrets::{SecretName, Secrets};
 use curseforge::CurseForge;
 use modrinth::Modrinth;
 
@@ -91,12 +89,6 @@ pub trait PackPlatform: Platform {
         let _ = build;
         Err(unsupported(self.name(), Operation::BuildPack))
     }
-
-    /// Pushes the page versioned in the repository at `root` to the platform.
-    fn push_page(&self, root: &Path) -> Result<()> {
-        let _ = root;
-        Err(unsupported(self.name(), Operation::PushPage))
-    }
 }
 
 impl PackPlatform for Modrinth {
@@ -115,13 +107,6 @@ impl PackPlatform for Modrinth {
 
     fn build_pack(&self, build: &PackBuild<'_>) -> Result<PathBuf> {
         mrpack::build(build)
-    }
-
-    fn push_page(&self, root: &Path) -> Result<()> {
-        let page = page_push::load(root)?;
-        let token = Secrets::system().get(SecretName::ModrinthToken)?;
-        println!("{}", page_push::push(self.client(), &page, &token)?);
-        Ok(())
     }
 }
 

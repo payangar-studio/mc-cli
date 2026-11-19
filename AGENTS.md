@@ -20,6 +20,7 @@ The design lives in `payangar-studio/environment`, branch `design`, files 00-cad
 - `crates/mc-core/templates/socle/`: files every socle owns whatever the project type (skills shared by the binaries, named `mc-*`), laid down with each socle's own files.
 - `crates/modpack/tests/`: integration tests of the binary; `crates/modpack/tests/fixtures/`: their fixtures.
 - `crates/mod/` follows the same layout. `crates/mod/templates/socle/` is the generated mod's Gradle build; `crates/mod/src/socle/skeleton.rs` lays out the mod's own files. `crates/mod/tests/gradle_build.rs` builds generated mods: `#[ignore]`, run by the CI job `mod-build`, needs a JDK 25.
+- `crates/mod/templates/library/`: the shared library copied into each mod, laid out by subproject and source set, in the template package `com.payangar.socle.vendor` that the copy rewrites. Its code rules are in that package's `package-info.java`.
 
 ## Who edits what
 

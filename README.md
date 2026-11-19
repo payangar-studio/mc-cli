@@ -4,7 +4,7 @@
 
 ## Install
 
-On a machine set up with chezmoi, the catalogue installs `modpack` from this repository's releases. Each release carries every binary of this repository, one archive each, `<binary>-<version>-x86_64-unknown-linux-musl.tar.gz` with its `.sha256`. By hand, on Linux x86_64:
+On a machine set up with chezmoi, the catalogue installs `modpack`. Each release of this repository carries every binary of this repository, one archive each, `<binary>-<version>-x86_64-unknown-linux-musl.tar.gz` with its `.sha256`. By hand, on Linux x86_64:
 
 ```sh
 version=0.4.0

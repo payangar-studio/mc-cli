@@ -186,7 +186,12 @@ fn init_without_terminal_nor_machine_author_names_the_argument() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("pass --author"))
-        .stderr(predicate::str::contains("minecraft/config.toml"));
+        .stderr(predicate::str::contains(
+            Path::new("minecraft")
+                .join("config.toml")
+                .display()
+                .to_string(),
+        ));
     assert!(!tmp.path().join("pack").exists());
 }
 
@@ -199,7 +204,10 @@ fn commands_other_than_init_never_read_the_machine_identity() {
     modpack(&root).arg("update").assert().success();
     modpack(&root).args(["variant", "list"]).assert().success();
 
-    // And in the source: only `init` uses the machine identity.
+    // And in the source: only `init` uses the machine identity. Comments
+    // do not count; any path to it (module, re-export, alias) names one of
+    // these in code.
+    const ENTRY_POINTS: &[&str] = &["machine_config", "MachineIdentity", "Identity::load"];
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut readers = Vec::new();
     let mut dirs = vec![src.clone()];
@@ -208,10 +216,13 @@ fn commands_other_than_init_never_read_the_machine_identity() {
             let path = entry.unwrap().path();
             if path.is_dir() {
                 dirs.push(path);
-            } else if fs::read_to_string(&path)
-                .unwrap()
-                .contains("machine_config")
-            {
+                continue;
+            }
+            let uses = fs::read_to_string(&path).unwrap().lines().any(|line| {
+                let code = line.split("//").next().unwrap();
+                ENTRY_POINTS.iter().any(|e| code.contains(e))
+            });
+            if uses {
                 readers.push(path.strip_prefix(&src).unwrap().to_owned());
             }
         }

@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::error::{Error, Result};
+use crate::error::{Context, Error, Result};
 use crate::model::{parse_toml, read_file, write_file};
 use crate::prompt::Prompt;
 
@@ -93,14 +93,27 @@ impl Identity {
             IdentityField::Author => &self.author,
             IdentityField::Package => &self.package,
         };
-        value.as_deref().filter(|v| !v.trim().is_empty())
+        value.as_deref().map(str::trim).filter(|v| !v.is_empty())
     }
 }
 
 /// Writes `value` as `field` of the identity in `path`, keeping the rest of
-/// the file (other values, other tables, comments) as it is.
+/// the file (other values, other tables, comments) as it is. A symlink is
+/// written through to its target and the file keeps its permissions: the file
+/// is often a dotfile managed elsewhere.
 pub fn save(path: &Path, field: IdentityField, value: &str) -> Result<()> {
-    let text = if path.exists() {
+    let (path, permissions) = if path.exists() {
+        let target =
+            std::fs::canonicalize(path).context(format!("resolving {}", path.display()))?;
+        let permissions = std::fs::metadata(&target)
+            .context(format!("reading {}", target.display()))?
+            .permissions();
+        (target, Some(permissions))
+    } else {
+        (path.to_owned(), None)
+    };
+    let path = path.as_path();
+    let text = if permissions.is_some() {
         read_file(path)?
     } else {
         String::new()
@@ -114,20 +127,27 @@ pub fn save(path: &Path, field: IdentityField, value: &str) -> Result<()> {
     let table = doc
         .entry(IDENTITY)
         .or_insert(toml_edit::table())
-        .as_table_mut()
+        .as_table_like_mut()
         .ok_or_else(|| {
             Error::usage(
                 format!("`{IDENTITY}` in {} is not a table", path.display()),
                 format!("make it a `[{IDENTITY}]` table, or delete the file"),
             )
         })?;
-    table[field.key()] = toml_edit::value(value);
-    write_file(path, &doc.to_string())
+    table.insert(field.key(), toml_edit::value(value));
+    write_file(path, &doc.to_string())?;
+    if let Some(permissions) = permissions {
+        std::fs::set_permissions(path, permissions)
+            .context(format!("writing {}", path.display()))?;
+    }
+    Ok(())
 }
 
 /// The identity values an `init` takes as defaults of its arguments. The file
 /// is read only when an argument is missing, at most once.
 pub struct MachineIdentity {
+    /// `None` when this machine has no config directory: no file to read or
+    /// save, the values come from the arguments or the terminal.
     path: Option<PathBuf>,
     identity: Option<Identity>,
 }
@@ -141,8 +161,11 @@ impl Default for MachineIdentity {
 impl MachineIdentity {
     /// The file at its usual place on this machine.
     pub fn new() -> Self {
+        let path = default_path()
+            .inspect_err(|e| tracing::debug!("no machine configuration: {e}"))
+            .ok();
         Self {
-            path: None,
+            path,
             identity: None,
         }
     }
@@ -166,45 +189,67 @@ impl MachineIdentity {
         field: IdentityField,
         arg: &str,
     ) -> Result<String> {
+        self.resolve_with(prompt.is_interactive(), value, field, arg, |path| {
+            let value = prompt.text(None, arg, field.question())?;
+            let Some(path) = path else {
+                return Ok((value, false));
+            };
+            let question = format!(
+                "Save it in {} as the default of the next projects?",
+                path.display()
+            );
+            let save = prompt.confirm(None, arg, &question, true)?;
+            Ok((value, save))
+        })
+    }
+
+    /// `resolve`, with `ask` standing for the terminal: given the file, if
+    /// any, it returns the answer and whether to save it there.
+    fn resolve_with(
+        &mut self,
+        interactive: bool,
+        value: Option<String>,
+        field: IdentityField,
+        arg: &str,
+        ask: impl FnOnce(Option<&Path>) -> Result<(String, bool)>,
+    ) -> Result<String> {
         if let Some(value) = value {
             return Ok(value);
         }
-        let path = self.path()?;
         if let Some(value) = self.identity()?.get(field) {
             return Ok(value.to_owned());
         }
-        if !prompt.is_interactive() {
-            return Err(Error::usage(
-                format!("missing value for {arg}, and no terminal to ask for it"),
-                format!(
-                    "pass {arg}, or set `{}` under `[{IDENTITY}]` in {}",
-                    field.key(),
-                    path.display()
+        if !interactive {
+            return Err(match &self.path {
+                Some(path) => Error::usage(
+                    format!("missing value for {arg}, and no terminal to ask for it"),
+                    format!(
+                        "pass {arg}, or set `{}` under `[{IDENTITY}]` in {}",
+                        field.key(),
+                        path.display()
+                    ),
                 ),
-            ));
+                None => Error::missing_value(arg),
+            });
         }
-        let value = prompt.text(None, arg, field.question())?;
-        let question = format!(
-            "Save it in {} as the default of the next projects?",
-            path.display()
-        );
-        if prompt.confirm(None, arg, &question, true)? {
-            save(&path, field, &value)?;
-            self.identity = None;
+        let (value, keep) = ask(self.path.as_deref())?;
+        if let (true, Some(path)) = (keep, &self.path) {
+            // Saving is a convenience: failing it must not lose the answer.
+            match save(path, field, &value) {
+                Ok(()) => self.identity = None,
+                Err(e) => tracing::warn!("could not save {arg} in {}: {e}", path.display()),
+            }
         }
         Ok(value)
     }
 
-    fn path(&mut self) -> Result<PathBuf> {
-        if self.path.is_none() {
-            self.path = Some(default_path()?);
-        }
-        Ok(self.path.clone().expect("set above"))
-    }
-
     fn identity(&mut self) -> Result<&Identity> {
         if self.identity.is_none() {
-            self.identity = Some(Identity::load(&self.path()?)?);
+            let identity = match &self.path {
+                Some(path) => Identity::load(path)?,
+                None => Identity::default(),
+            };
+            self.identity = Some(identity);
         }
         Ok(self.identity.as_ref().expect("set above"))
     }
@@ -322,5 +367,77 @@ mod tests {
         let identity = Identity::load(&path).unwrap();
         assert_eq!(identity.get(IdentityField::Author), Some("Payangar"));
         assert_eq!(identity.get(IdentityField::Package), Some("com.payangar"));
+    }
+
+    #[test]
+    fn save_into_an_inline_identity_table() {
+        let (_dir, path) = file("identity = { package = \"com.payangar\" }\n");
+        save(&path, IdentityField::Author, "Payangar").unwrap();
+        let identity = Identity::load(&path).unwrap();
+        assert_eq!(identity.get(IdentityField::Author), Some("Payangar"));
+        assert_eq!(identity.get(IdentityField::Package), Some("com.payangar"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_writes_through_a_symlink_and_keeps_the_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_dotfiles, target) = file("[identity]\npackage = \"com.payangar\"\n");
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("config.toml");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        save(&link, IdentityField::Author, "Payangar").unwrap();
+
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(
+            Identity::load(&target).unwrap().get(IdentityField::Author),
+            Some("Payangar")
+        );
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn answer_survives_a_failed_save() {
+        let dir = tempfile::tempdir().unwrap();
+        // A regular file where the directory should be: the save cannot write.
+        std::fs::write(dir.path().join("minecraft"), "").unwrap();
+        let mut machine = MachineIdentity::at(dir.path().join("minecraft/config.toml"));
+        let value = machine.resolve_with(true, None, IdentityField::Author, "--author", |_| {
+            Ok(("Asked".into(), true))
+        });
+        assert_eq!(value.unwrap(), "Asked");
+    }
+
+    #[test]
+    fn no_config_dir_asks_or_names_the_argument() {
+        let mut machine = MachineIdentity {
+            path: None,
+            identity: None,
+        };
+        let err = machine
+            .resolve_with(false, None, IdentityField::Author, "--author", |_| {
+                panic!("asked without a terminal")
+            })
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Usage);
+        assert_eq!(err.hint(), "pass --author");
+
+        let value = machine.resolve_with(true, None, IdentityField::Author, "--author", |path| {
+            assert_eq!(path, None, "no file to offer saving into");
+            Ok(("Asked".into(), true))
+        });
+        assert_eq!(value.unwrap(), "Asked");
+    }
+
+    #[test]
+    fn values_are_trimmed() {
+        let (_dir, path) = file("[identity]\nauthor = \" Payangar \"\n");
+        assert_eq!(
+            Identity::load(&path).unwrap().get(IdentityField::Author),
+            Some("Payangar")
+        );
     }
 }

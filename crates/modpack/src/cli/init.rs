@@ -29,7 +29,7 @@ pub struct Args {
     /// Mod loader version
     #[arg(long)]
     pub loader_version: Option<String>,
-    /// Author of the modpack; defaults to the machine configuration's
+    /// Author of the modpack; defaults to `author` under `[identity]` in the machine configuration
     #[arg(long)]
     pub author: Option<String>,
 }

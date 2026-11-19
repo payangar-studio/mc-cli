@@ -19,4 +19,5 @@ pub struct Versions {
     pub loom: String,
     pub neoforge: String,
     pub moddevgradle: String,
+    pub modmenu: String,
 }

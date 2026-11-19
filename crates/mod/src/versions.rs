@@ -3,8 +3,9 @@
 //! its Minecraft version into `.mod/socle.toml`, which the build reads.
 //!
 //! Each set is read from the official maven metadata when it is added, never
-//! guessed: maven.fabricmc.net (Loom, Fabric Loader, Fabric API) and
-//! maven.neoforged.net (NeoForge, ModDevGradle).
+//! guessed: maven.fabricmc.net (Loom, Fabric Loader, Fabric API),
+//! maven.neoforged.net (NeoForge, ModDevGradle) and maven.terraformersmc.com
+//! (Mod Menu).
 
 use crate::model::socle::Versions;
 
@@ -19,6 +20,8 @@ pub struct Pinned {
     pub neoforge: &'static str,
     /// ModDevGradle, as the `net.neoforged.moddev` plugin.
     pub moddevgradle: &'static str,
+    /// Mod Menu, compile-only: the shared library's config screen entrypoint.
+    pub modmenu: &'static str,
 }
 
 /// Supported Minecraft versions, the latest first: it is the default.
@@ -29,6 +32,7 @@ pub const SUPPORTED: &[Pinned] = &[Pinned {
     loom: "1.19.4",
     neoforge: "26.3.0.113",
     moddevgradle: "2.0.148",
+    modmenu: "21.0.1",
 }];
 
 /// The pinned set of `minecraft`, if supported.
@@ -46,6 +50,7 @@ impl Pinned {
             loom: self.loom.into(),
             neoforge: self.neoforge.into(),
             moddevgradle: self.moddevgradle.into(),
+            modmenu: self.modmenu.into(),
         }
     }
 }

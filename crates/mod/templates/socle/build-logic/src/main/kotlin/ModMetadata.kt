@@ -3,14 +3,19 @@
 // The values that fill the loader metadata templates (build-logic/templates/),
 // derived from mod.toml and the pinned versions. The entrypoint classes are
 // those `mod init` writes: `<package>.fabric.FabricEntrypoint` and
-// `<package>.fabric.client.FabricClientEntrypoint`.
+// `<package>.fabric.client.FabricClientEntrypoint`; and Mod Menu's, from the
+// shared library: `<package>.vendor.fabric.ModMenuEntrypoint`.
 
 object ModMetadata {
-    /** Values of build-logic/templates/fabric.mod.json. */
-    fun fabric(mod: ModToml, pinned: Pinned, version: String): Map<String, String> {
+    /**
+     * Values of build-logic/templates/fabric.mod.json. `modMenu`: whether the
+     * sources hold the library's Mod Menu entrypoint.
+     */
+    fun fabric(mod: ModToml, pinned: Pinned, version: String, modMenu: Boolean): Map<String, String> {
         val entrypoints = buildList {
             add("\"main\": [${json("${mod.pkg}.fabric.FabricEntrypoint")}]")
             if (mod.hasClient) add("\"client\": [${json("${mod.pkg}.fabric.client.FabricClientEntrypoint")}]")
+            if (mod.hasClient && modMenu) add("\"modmenu\": [${json("${mod.pkg}.vendor.fabric.ModMenuEntrypoint")}]")
         }
         val depends = linkedMapOf(
             "fabricloader" to ">=${pinned.fabricLoader}",

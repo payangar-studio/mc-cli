@@ -13,6 +13,11 @@ It edits no code and commits nothing. This skill covers the rest.
 ## 1. Start the port
 
 - Start from a clean working tree, on the branch of the version to port from.
+- The socle must be the one of the installed `mc-cli`: `mod port` refuses an
+  older one, since the versions it writes go with the build of its own socle.
+  Run `mod update`, commit, then port.
+- Run `git fetch` first: `mod port` refuses a branch of that version that
+  exists locally or on a remote, and only sees the remote branches fetched.
 - Run `mod port <version>`. A version it does not know means `mc-cli` has no
   versions pinned for it yet: tell the user to update `mc-cli`, and stop.
 - Never edit the versions of `.mod/socle.toml` by hand: they come from `mc-cli`.

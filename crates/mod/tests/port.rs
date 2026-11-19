@@ -1,37 +1,15 @@
-//! `mod port`: a generated mod moved to another Minecraft version, against a
-//! fixture version table, and the refusals that leave the repository as it was.
+//! `mod port` through the binary: a generated mod moved to the CLI's newest
+//! version, and the refusals that leave the repository as it was. The port to
+//! a fixture version table is tested in the module (`src/cli/port.rs`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as Process;
 
 use assert_cmd::Command;
-use mc_mod::cli::port::port;
-use mc_mod::error::ErrorKind;
 use mc_mod::model::socle::SocleConfig;
 use mc_mod::socle::SOCLE;
-use mc_mod::versions::Pinned;
 use predicates::prelude::*;
-
-/// A version table with the version mods are generated on and a later one.
-const TABLE: &[Pinned] = &[
-    Pinned {
-        minecraft: "26.4",
-        fabric_loader: "0.21.0",
-        fabric_api: "0.170.0+26.4",
-        loom: "1.20.1",
-        neoforge: "26.4.0.7",
-        moddevgradle: "2.0.150",
-    },
-    Pinned {
-        minecraft: "26.3",
-        fabric_loader: "0.20.1",
-        fabric_api: "0.166.2+26.3",
-        loom: "1.19.4",
-        neoforge: "26.3.0.113",
-        moddevgradle: "2.0.148",
-    },
-];
 
 /// The binary without a terminal, with a machine configuration of its own.
 fn bin(dir: &Path) -> Command {
@@ -42,7 +20,8 @@ fn bin(dir: &Path) -> Command {
     cmd
 }
 
-/// Runs git in `dir`, which must succeed; its trimmed stdout.
+/// Runs git in `dir`, which must succeed; its stdout without the trailing
+/// newline.
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Process::new("git")
         .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
@@ -55,7 +34,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
         "git {args:?}: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
 }
 
 /// A mod generated on 26.3, committed on its branch `26.3`.
@@ -81,30 +60,44 @@ fn committed_mod() -> (tempfile::TempDir, PathBuf) {
     (tmp, root)
 }
 
+/// The committed mod, its socle settings changed by `edit` and committed on
+/// the branch `branch`.
+fn edited_mod(branch: &str, edit: impl FnOnce(&mut SocleConfig)) -> (tempfile::TempDir, PathBuf) {
+    let (tmp, root) = committed_mod();
+    let mut config = SocleConfig::load(&SOCLE, &root).unwrap();
+    edit(&mut config);
+    config.save(&SOCLE, &root).unwrap();
+    git(&root, &["branch", "-m", branch]);
+    git(&root, &["commit", "-q", "-am", "edit"]);
+    (tmp, root)
+}
+
+/// The committed mod as if it were on Minecraft 26.2, a version before the
+/// CLI's 26.3.
+fn mod_on_26_2() -> (tempfile::TempDir, PathBuf) {
+    edited_mod("26.2", |config| {
+        config.init.minecraft = "26.2".into();
+        config.init.fabric_api = "0.150.0+26.2".into();
+    })
+}
+
 #[test]
-fn port_creates_the_version_branch_with_its_versions() {
-    let (_tmp, root) = committed_mod();
-    let before = SocleConfig::load(&SOCLE, &root).unwrap();
+fn port_creates_the_branch_and_lists_the_changed_versions() {
+    let (_tmp, root) = mod_on_26_2();
     let head = git(&root, &["rev-parse", "HEAD"]);
 
-    let ported = port(&root, "26.4", TABLE).unwrap();
+    bin(&root)
+        .args(["port", "26.3"])
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with(
+            "Created branch 26.3 from 26.2, with these versions in .mod/socle.toml:\n  minecraft: 26.2 -> 26.3\n  fabric-api: 0.150.0+26.2 -> 0.166.2+26.3\nNothing is committed.",
+        ));
 
-    assert_eq!(ported.from_branch, "26.3");
-    assert_eq!(ported.from, before.init);
-    assert_eq!(ported.to, TABLE[0].versions());
-    // The new branch starts from the old one, which is left as it was.
-    assert_eq!(git(&root, &["branch", "--show-current"]), "26.4");
+    assert_eq!(git(&root, &["branch", "--show-current"]), "26.3");
     assert_eq!(git(&root, &["rev-parse", "HEAD"]), head);
-    assert_eq!(git(&root, &["rev-parse", "26.3"]), head);
-    // Only the socle settings change: the versions, nothing else.
-    assert_eq!(git(&root, &["status", "--porcelain"]), "M .mod/socle.toml");
-    let after = SocleConfig::load(&SOCLE, &root).unwrap();
-    assert_eq!(after.version, before.version);
-    assert_eq!(after.init, TABLE[0].versions());
-    let text = fs::read_to_string(root.join(".mod/socle.toml")).unwrap();
-    assert!(text.contains("minecraft = \"26.4\""), "{text}");
-    assert!(text.contains("fabric-api = \"0.170.0+26.4\""), "{text}");
-    assert!(text.contains("neoforge = \"26.4.0.7\""), "{text}");
+    assert_eq!(git(&root, &["rev-parse", "26.2"]), head);
+    assert_eq!(git(&root, &["status", "--porcelain"]), " M .mod/socle.toml");
 }
 
 /// The table of the CLI only knows released versions: an unknown one is a
@@ -128,10 +121,9 @@ fn an_unknown_version_says_to_update_mc_cli() {
 }
 
 #[test]
-fn the_cli_ports_with_its_own_table() {
+fn the_version_the_mod_is_on_is_refused() {
     let (_tmp, root) = committed_mod();
 
-    // The CLI's table holds 26.3, the mod's current version.
     bin(&root)
         .args(["port", "26.3"])
         .assert()
@@ -140,32 +132,59 @@ fn the_cli_ports_with_its_own_table() {
     assert_eq!(git(&root, &["branch", "--list"]), "* 26.3");
 }
 
+/// The versions of the CLI's table go with the build of its own socle: an
+/// older `build-logic/` might not build them, so `mod update` comes first.
+#[test]
+fn an_older_socle_is_refused_until_mod_update() {
+    let (_tmp, root) = edited_mod("26.2", |config| {
+        config.init.minecraft = "26.2".into();
+        config.version = "0.0.1".into();
+    });
+
+    bin(&root)
+        .args(["port", "26.3"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "error: this repository uses socle 0.0.1",
+        ))
+        .stderr(predicate::str::contains(
+            "run `mod update`, commit, then rerun `mod port 26.3`",
+        ));
+
+    assert_eq!(git(&root, &["branch", "--list"]), "* 26.2");
+    assert_eq!(git(&root, &["status", "--porcelain"]), "");
+}
+
 #[test]
 fn uncommitted_changes_are_refused() {
-    let (_tmp, root) = committed_mod();
+    let (_tmp, root) = mod_on_26_2();
+    fs::write(root.join("mod.toml"), "changed\n").unwrap();
     fs::write(root.join("notes.txt"), "wip\n").unwrap();
 
-    let err = port(&root, "26.4", TABLE).unwrap_err();
+    bin(&root)
+        .args(["port", "26.3"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "uncommitted changes:\n M mod.toml\n?? notes.txt",
+        ));
 
-    assert_eq!(err.kind(), ErrorKind::Usage);
-    assert!(err.to_string().contains("uncommitted changes"), "{err}");
-    assert!(err.to_string().contains("notes.txt"), "{err}");
-    assert_eq!(git(&root, &["branch", "--list"]), "* 26.3");
+    assert_eq!(git(&root, &["branch", "--list"]), "* 26.2");
 }
 
 #[test]
 fn an_existing_branch_is_refused() {
-    let (_tmp, root) = committed_mod();
-    git(&root, &["branch", "26.4"]);
+    let (_tmp, root) = mod_on_26_2();
+    git(&root, &["branch", "26.3"]);
 
-    let err = port(&root, "26.4", TABLE).unwrap_err();
+    bin(&root)
+        .args(["port", "26.3"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("branch 26.3 already exists"));
 
-    assert_eq!(err.kind(), ErrorKind::Usage);
-    assert!(
-        err.to_string().contains("branch 26.4 already exists"),
-        "{err}"
-    );
-    assert_eq!(git(&root, &["branch", "--show-current"]), "26.3");
+    assert_eq!(git(&root, &["branch", "--show-current"]), "26.2");
     assert_eq!(git(&root, &["status", "--porcelain"]), "");
 }
 

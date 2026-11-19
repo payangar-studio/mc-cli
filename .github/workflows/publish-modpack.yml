@@ -212,7 +212,7 @@ jobs:
           for platform in $PLATFORMS; do
             case "$platform" in
               modrinth) project="$modrinth" how="run \`modpack page push\` to create it" ;;
-              curseforge) project="$curseforge" how="create it with the modpack-curseforge-page skill" ;;
+              curseforge) project="$curseforge" how="create it with the mc-curseforge-page skill" ;;
               *) echo "::error::Unknown platform $platform: use modrinth, curseforge or both."; exit 1 ;;
             esac
             if [[ -z "$project" && "$DRY_RUN" != true ]]; then

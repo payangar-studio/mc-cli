@@ -55,4 +55,4 @@ A resource pack is put in the instance's `resourcepacks/`, not enabled: the play
 - `modpack-return`: bring what changed in the instance back into the repository (mods and resource packs tried from the app, configuration changed in game).
 - `modpack-audit`: audit what changed since the last audit (new mods, known conflicts, sources, platforms, orphan configuration).
 - `modpack-source`: read the source code of a mod, on the version the pack runs.
-- `modpack-curseforge-page`: create or update the CurseForge project page from `page/`.
+- `mc-curseforge-page`: create or update the CurseForge project page from `page/`.

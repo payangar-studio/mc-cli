@@ -6,13 +6,14 @@ use tokio::runtime::Runtime;
 use wiremock::matchers::{body_partial_json, header, method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
-use mc_core::page::{DESCRIPTION, GALLERY_DIR, GALLERY_TOML, ICON};
-use mc_core::platform::modrinth::API_URL;
 use sha1::{Digest, Sha1};
 
 use super::*;
 use crate::error::ErrorKind;
-use crate::model::socle::InitValues;
+use crate::model::entry::{Env, Support};
+use crate::model::side::Side;
+use crate::page::{DESCRIPTION, GALLERY_DIR, GALLERY_TOML, ICON, ProjectType};
+use crate::platform::modrinth::API_URL;
 
 const TOKEN: &str = "mrp_test-token-never-shown";
 const ID: &str = "PrjAbc12";
@@ -90,6 +91,21 @@ fn token() -> Secret {
     Secret::new(TOKEN)
 }
 
+/// How the modpack CLI lists a modpack: played on the client, which a server
+/// may or may not run.
+const MODPACK: Listing = Listing {
+    project_type: ProjectType::Modpack,
+    env: Env {
+        client: Support::Required,
+        server: Support::Optional,
+    },
+};
+
+/// The page under `root`, as the modpack CLI reads it.
+fn load(root: &Path) -> Result<Page> {
+    Page::load(root, "modpack", || Ok("Default Name".into()))
+}
+
 fn sha1_of(bytes: &[u8]) -> String {
     Sha1::digest(bytes)
         .iter()
@@ -158,6 +174,106 @@ fn page_toml(root: &Path) -> String {
     fs::read_to_string(root.join(DIR).join(super::PAGE_TOML)).unwrap()
 }
 
+/// The project a creation request sends: a multipart form whose `data` part
+/// holds it.
+fn created(create: &Request) -> Value {
+    let content_type = create.headers["content-type"].to_str().unwrap().to_owned();
+    let boundary = content_type
+        .strip_prefix("multipart/form-data; boundary=")
+        .unwrap();
+    let body = String::from_utf8(create.body.clone()).unwrap();
+    let data = body
+        .split(&format!("--{boundary}"))
+        .find(|part| part.contains("name=\"data\""))
+        .and_then(|part| part.split("\r\n\r\n").nth(1))
+        .unwrap()
+        .trim_end();
+    serde_json::from_str(data).unwrap()
+}
+
+/// Creates the project of the page `PAGE_TOML`, without icon nor gallery, as
+/// `listing` says, and returns what the creation sent.
+fn create_with(listing: &Listing) -> Value {
+    let dir = repo(PAGE_TOML, None, &[]);
+    fs::remove_file(dir.path().join(DIR).join(ICON)).unwrap();
+    let api = Api::start();
+    api.mount(
+        Mock::given(method("POST"))
+            .and(path("/project"))
+            .and(header("authorization", TOKEN))
+            .respond_with(ResponseTemplate::new(200).set_body_json(project(None, json!([])))),
+    );
+    let page = load(dir.path()).unwrap();
+    push(&api.client(), &page, &token(), listing).unwrap();
+    assert_eq!(api.calls(), ["POST /project"]);
+    created(&api.requests()[0])
+}
+
+/// The project the page `PAGE_TOML` creates, whatever its type and sides.
+fn common_payload() -> Value {
+    json!({
+        "title": "Test Pack",
+        "slug": "test-pack",
+        "description": "A pack for tests.",
+        "body": "# Test Pack\n\nLong text.\n",
+        "categories": ["adventure"],
+        "additional_categories": [],
+        "license_id": "MIT",
+        "source_url": "https://github.com/example/pack",
+        "issues_url": null,
+        "wiki_url": null,
+        "discord_url": null,
+        "initial_versions": [],
+        "is_draft": true,
+    })
+}
+
+/// The whole payload of a modpack, as `modpack page push` sent it before the
+/// page push moved to the shared crate.
+#[test]
+fn modpack_payload_is_unchanged() {
+    let mut expected = common_payload();
+    expected["project_type"] = json!("modpack");
+    expected["client_side"] = json!("required");
+    expected["server_side"] = json!("optional");
+    assert_eq!(create_with(&MODPACK), expected);
+}
+
+/// A mod is created with the type `mod` and the sides its `side` maps to;
+/// the rest of the payload is the modpack's.
+fn assert_mod_payload(side: &str, client_side: &str, server_side: &str) {
+    #[derive(serde::Deserialize)]
+    struct ModToml {
+        side: Side,
+    }
+    let mod_toml: ModToml = toml::from_str(&format!("side = \"{side}\"")).unwrap();
+    let mut expected = common_payload();
+    expected["project_type"] = json!("mod");
+    expected["client_side"] = json!(client_side);
+    expected["server_side"] = json!(server_side);
+    assert_eq!(create_with(&Listing::of_mod(mod_toml.side)), expected);
+}
+
+#[test]
+fn mod_payload_side_client() {
+    assert_mod_payload("client", "required", "unsupported");
+}
+
+#[test]
+fn mod_payload_side_server() {
+    assert_mod_payload("server", "unsupported", "required");
+}
+
+#[test]
+fn mod_payload_side_both_required() {
+    assert_mod_payload("both-required", "required", "required");
+}
+
+#[test]
+fn mod_payload_side_both_optional() {
+    assert_mod_payload("both-optional", "optional", "required");
+}
+
 #[test]
 fn creates_the_project_then_edits_it() {
     let gallery = r#"
@@ -177,7 +293,7 @@ featured = true
     api.accept_writes();
 
     let page = load(dir.path()).unwrap();
-    let line = push(&api.client(), &page, &token()).unwrap();
+    let line = push(&api.client(), &page, &token(), &MODPACK).unwrap();
     assert!(line.starts_with(&format!("modrinth: created draft project test-pack ({ID})")));
     assert!(line.contains("icon uploaded; gallery: 1 added, 0 updated, 0 removed"));
     assert_eq!(
@@ -191,20 +307,7 @@ featured = true
         ]
     );
 
-    // The creation is a multipart form whose `data` part holds the project.
-    let create = &api.requests()[0];
-    let content_type = create.headers["content-type"].to_str().unwrap().to_owned();
-    let boundary = content_type
-        .strip_prefix("multipart/form-data; boundary=")
-        .unwrap();
-    let body = String::from_utf8(create.body.clone()).unwrap();
-    let data = body
-        .split(&format!("--{boundary}"))
-        .find(|part| part.contains("name=\"data\""))
-        .and_then(|part| part.split("\r\n\r\n").nth(1))
-        .unwrap()
-        .trim_end();
-    let data: Value = serde_json::from_str(data).unwrap();
+    let data = created(&api.requests()[0]);
     assert_eq!(data["title"], "Test Pack");
     assert_eq!(data["slug"], "test-pack");
     assert_eq!(data["description"], "A pack for tests.");
@@ -249,7 +352,7 @@ featured = true
             .respond_with(ResponseTemplate::new(204)),
     );
     let page = load(dir.path()).unwrap();
-    let line = push(&api.client(), &page, &token()).unwrap();
+    let line = push(&api.client(), &page, &token(), &MODPACK).unwrap();
     assert_eq!(
         line,
         format!(
@@ -295,7 +398,7 @@ title = "Kept"
     api.accept_writes();
 
     let page = load(dir.path()).unwrap();
-    let line = push(&api.client(), &page, &token()).unwrap();
+    let line = push(&api.client(), &page, &token(), &MODPACK).unwrap();
     assert!(line.ends_with("icon uploaded; gallery: 2 added, 1 updated, 1 removed"));
     let gone = cdn(b"gone", "_350.webp")
         .replace(':', "%3A")
@@ -326,7 +429,7 @@ fn creation_needs_a_license_and_sends_nothing_without_it() {
     let dir = repo(&PAGE_TOML.replace("license = \"MIT\"", ""), None, &[]);
     let api = Api::start();
     let page = load(dir.path()).unwrap();
-    let err = push(&api.client(), &page, &token()).unwrap_err();
+    let err = push(&api.client(), &page, &token(), &MODPACK).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Usage);
     assert!(err.to_string().contains("modrinth.license"));
     assert!(api.calls().is_empty());
@@ -338,7 +441,7 @@ fn unknown_project_id_is_a_usage_error() {
     let dir = repo(&with_id, None, &[]);
     let api = Api::start();
     let page = load(dir.path()).unwrap();
-    let err = push(&api.client(), &page, &token()).unwrap_err();
+    let err = push(&api.client(), &page, &token(), &MODPACK).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Usage);
     assert!(err.to_string().contains("Modrinth has no project `nope`"));
     assert!(err.hint().contains("empty it to create a new project"));
@@ -357,7 +460,7 @@ fn refusal_carries_the_reason_given_by_modrinth() {
             }))),
     );
     let page = load(dir.path()).unwrap();
-    let err = push(&api.client(), &page, &token()).unwrap_err();
+    let err = push(&api.client(), &page, &token(), &MODPACK).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Usage);
     assert!(err.to_string().contains("Invalid category: adventure"));
     assert!(!err.to_string().contains(TOKEN));
@@ -378,7 +481,7 @@ fn a_taken_slug_names_the_field_to_set() {
             }))),
     );
     let page = load(dir.path()).unwrap();
-    let err = push(&api.client(), &page, &token()).unwrap_err();
+    let err = push(&api.client(), &page, &token(), &MODPACK).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Usage);
     assert!(err.to_string().contains("Slug is already taken!"));
     assert!(
@@ -387,7 +490,7 @@ fn a_taken_slug_names_the_field_to_set() {
         err.hint()
     );
     assert!(
-        err.hint().contains("derived from the pack name"),
+        err.hint().contains("derived from the project name"),
         "{}",
         err.hint()
     );
@@ -412,7 +515,7 @@ fn a_new_slug_renames_the_existing_project() {
             .respond_with(ResponseTemplate::new(204)),
     );
     let page = load(dir.path()).unwrap();
-    let line = push(&api.client(), &page, &token()).unwrap();
+    let line = push(&api.client(), &page, &token(), &MODPACK).unwrap();
     assert!(
         line.starts_with(&format!(
             "modrinth: updated project better-pack ({ID}); slug changed from test-pack to better-pack"
@@ -426,7 +529,7 @@ fn a_new_slug_renames_the_existing_project() {
     renamed["slug"] = json!("better-pack");
     api.serve_project(renamed);
     api.accept_writes();
-    let line = push(&api.client(), &page, &token()).unwrap();
+    let line = push(&api.client(), &page, &token(), &MODPACK).unwrap();
     assert!(!line.contains("slug changed"), "{line}");
     let edit = &api.requests()[1];
     let body: Value = serde_json::from_slice(&edit.body).unwrap();
@@ -444,7 +547,7 @@ fn refused_token_points_to_auth() {
             .respond_with(ResponseTemplate::new(401)),
     );
     let page = load(dir.path()).unwrap();
-    let err = push(&api.client(), &page, &token()).unwrap_err();
+    let err = push(&api.client(), &page, &token(), &MODPACK).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Usage);
     assert!(err.hint().contains("modpack auth modrinth-token"));
 }
@@ -486,38 +589,6 @@ fn gallery_errors_name_the_problem() {
     let err = load(repo(PAGE_TOML, Some(typo), &[("a.png", b"a")]).path()).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Usage);
     assert!(err.to_string().contains("gallery.toml is invalid"));
-}
-
-/// The skeleton `modpack init` lays down: the pack name comes from init, and
-/// the summary is asked for before anything is sent.
-#[test]
-fn page_template_needs_a_summary_and_takes_the_pack_name() {
-    let dir = tempfile::tempdir().unwrap();
-    crate::socle::init(
-        dir.path(),
-        InitValues {
-            name: "Skeleton Pack".into(),
-            minecraft: "1.21.1".into(),
-            loader: "neoforge".into(),
-            loader_version: "21.1.77".into(),
-            author: "Tester".into(),
-        },
-    )
-    .unwrap();
-    let err = load(dir.path()).unwrap_err();
-    assert!(err.to_string().contains("has no summary"));
-
-    let path = dir.path().join(DIR).join(super::PAGE_TOML);
-    let text =
-        fs::read_to_string(&path)
-            .unwrap()
-            .replacen("summary = \"\"", "summary = \"Filled.\"", 1);
-    fs::write(&path, text).unwrap();
-    let page = load(dir.path()).unwrap();
-    assert_eq!(page.name, "Skeleton Pack");
-    assert!(page.icon.is_none());
-    assert!(page.gallery.is_empty());
-    assert!(page.modrinth.project_id.is_empty());
 }
 
 #[test]
@@ -584,9 +655,10 @@ fn real_api_edits_a_test_project() {
     let api = super::Api {
         client: &client,
         token: &token,
+        bin: "modpack",
     };
 
-    let line = push(&client, &load(dir.path()).unwrap(), &token).unwrap();
+    let line = push(&client, &load(dir.path()).unwrap(), &token, &MODPACK).unwrap();
     println!("{line}");
     let remote = api.project(&id).unwrap();
     assert!(
@@ -598,7 +670,7 @@ fn real_api_edits_a_test_project() {
     assert!(remote.icon_url.is_some());
 
     fs::remove_file(dir.path().join(DIR).join(GALLERY_DIR).join("shot.png")).unwrap();
-    let line = push(&client, &load(dir.path()).unwrap(), &token).unwrap();
+    let line = push(&client, &load(dir.path()).unwrap(), &token, &MODPACK).unwrap();
     println!("{line}");
     assert!(api.project(&id).unwrap().gallery.is_empty());
 }

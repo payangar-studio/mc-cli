@@ -26,6 +26,7 @@ tracing.workspace = true
 keyring-core.workspace = true
 serde_json.workspace = true
 ureq.workspace = true
+toml_edit.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus-secret-service-keyring-store.workspace = true

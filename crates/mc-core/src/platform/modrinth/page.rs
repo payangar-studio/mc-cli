@@ -1,12 +1,13 @@
 //! `push_page` of Modrinth: pushes the page versioned in `page/`
-//! ([`mc_core::page`]) to the project, by the API.
+//! ([`crate::page`]) to the project, by the API.
 //!
 //! Without a project id in `page/page.toml`, the project is created as a
-//! draft modpack and its id is written back to `page.toml`. With one, the
-//! project's texts, links, categories and license are edited. In both cases
-//! the icon and the gallery are then brought in line with `page/`: the
-//! repository is the source of truth, so an image removed from `page/gallery/`
-//! is removed from Modrinth.
+//! draft, of the type and with the sides of its [`Listing`], and its id is
+//! written back to `page.toml`. With one, the project's texts, links,
+//! categories and license are edited; its type and sides are left as they
+//! are. In both cases the icon and the gallery are then brought in line with
+//! `page/`: the repository is the source of truth, so an image removed from
+//! `page/gallery/` is removed from Modrinth.
 //!
 //! Modrinth names every uploaded image after the sha1 of its bytes
 //! (`<sha1>.<ext>`, or `<sha1>_<width>.webp` once resized), which is how a
@@ -21,27 +22,11 @@ use ureq::http::{Response, StatusCode};
 use ureq::typestate::WithBody;
 use ureq::{Body, RequestBuilder};
 
-use mc_core::page::{DIR, GalleryImage, Image, PAGE_TOML, Page};
-use mc_core::platform::modrinth::client::Client;
-use mc_core::platform::modrinth::{NAME, encode_segment};
-
+use super::client::Client;
+use super::{NAME, encode_segment};
 use crate::error::{Context, Error, Result};
-use crate::model::socle::SocleConfig;
+use crate::page::{DIR, GalleryImage, Image, Listing, PAGE_TOML, Page};
 use crate::secrets::Secret;
-use crate::socle::SOCLE;
-
-/// Sides declared at creation, required by the API. A modpack is played on
-/// the client; a server may or may not run it.
-const CLIENT_SIDE: &str = "required";
-const SERVER_SIDE: &str = "optional";
-
-/// Reads `page/` under the repository `root`. An empty `name` falls back to
-/// the pack name given to `modpack init`.
-pub fn load(root: &Path) -> Result<Page> {
-    Page::load(root, SOCLE.bin, || {
-        Ok(SocleConfig::load(&SOCLE, root)?.init.name)
-    })
-}
 
 /// The project as Modrinth returns it, reduced to what the push compares.
 #[derive(Debug, Deserialize)]
@@ -78,14 +63,19 @@ struct Changes {
     removed: usize,
 }
 
-/// Pushes `page` to Modrinth with `token`, and returns a line saying what
-/// was done.
-pub fn push(client: &Client, page: &Page, token: &Secret) -> Result<String> {
-    let api = Api { client, token };
+/// Pushes `page` to Modrinth with `token`, creating the project as
+/// `listing` says when the page has no project id, and returns a line saying
+/// what was done.
+pub fn push(client: &Client, page: &Page, token: &Secret, listing: &Listing) -> Result<String> {
+    let api = Api {
+        client,
+        token,
+        bin: &page.bin,
+    };
     let section = &page.modrinth;
     let mut renamed = None;
     let (remote, created) = if section.project_id.trim().is_empty() {
-        let remote = api.create(page)?;
+        let remote = api.create(page, listing)?;
         record_project_id(&page.root, &remote.id)?;
         (remote, true)
     } else {
@@ -222,6 +212,8 @@ fn sync_gallery(
 struct Api<'a> {
     client: &'a Client,
     token: &'a Secret,
+    /// The binary, as error hints name its commands.
+    bin: &'a str,
 }
 
 impl Api<'_> {
@@ -242,11 +234,12 @@ impl Api<'_> {
                 ),
             ));
         }
-        read(response, &path)
+        read(response, &path, self.bin)
     }
 
-    /// Creates the project as a draft modpack.
-    fn create(&self, page: &Page) -> Result<Remote> {
+    /// Creates the project as a draft, of the type and with the sides of
+    /// `listing`.
+    fn create(&self, page: &Page, listing: &Listing) -> Result<Remote> {
         let section = &page.modrinth;
         if section.license.trim().is_empty() {
             return Err(Error::usage(
@@ -264,9 +257,9 @@ impl Api<'_> {
         };
         let mut data = fields(page);
         data["slug"] = json!(slug);
-        data["project_type"] = json!("modpack");
-        data["client_side"] = json!(CLIENT_SIDE);
-        data["server_side"] = json!(SERVER_SIDE);
+        data["project_type"] = json!(listing.project_type.name());
+        data["client_side"] = json!(listing.env.client);
+        data["server_side"] = json!(listing.env.server);
         data["initial_versions"] = json!([]);
         data["is_draft"] = json!(true);
         let (content_type, body) = multipart_data(&data.to_string());
@@ -277,7 +270,7 @@ impl Api<'_> {
                 .header("Content-Type", &content_type)
                 .send(&body[..])
         })?;
-        read(response, "/project")
+        read(response, "/project", self.bin)
     }
 
     /// Edits the texts, links, categories and license of the project, and
@@ -294,7 +287,7 @@ impl Api<'_> {
                 .header("Authorization", self.token.expose())
                 .send_json(&data)
         })?;
-        check(response, &path).map(drop)
+        check(response, &path, self.bin).map(drop)
     }
 
     /// A write without JSON body: `POST` or `PATCH` with the image as raw
@@ -332,7 +325,7 @@ impl Api<'_> {
                         .call(),
                 }
             })?;
-        check(response, path).map(drop)
+        check(response, path, self.bin).map(drop)
     }
 }
 
@@ -378,7 +371,7 @@ fn fields(page: &Page) -> Value {
     data
 }
 
-/// A slug from the pack name: lowercase ASCII letters and digits, other
+/// A slug from the project name: lowercase ASCII letters and digits, other
 /// characters turned into single dashes.
 fn slugify(name: &str) -> String {
     let mut slug = String::new();
@@ -408,8 +401,9 @@ fn multipart_data(json: &str) -> (String, Vec<u8>) {
     )
 }
 
-/// The response, or an error saying what Modrinth refused and why.
-fn check(mut response: Response<Body>, path: &str) -> Result<Response<Body>> {
+/// The response, or an error saying what Modrinth refused and why. `bin`
+/// names the binary in hints.
+fn check(mut response: Response<Body>, path: &str, bin: &str) -> Result<Response<Body>> {
     let status = response.status();
     if status.is_success() {
         return Ok(response);
@@ -426,12 +420,14 @@ fn check(mut response: Response<Body>, path: &str) -> Result<Response<Body>> {
     Err(match status {
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Error::usage(
             what,
-            "check the Modrinth token and its scopes (PROJECT_CREATE, PROJECT_WRITE), then store it with `modpack auth modrinth-token`",
+            format!(
+                "check the Modrinth token and its scopes (PROJECT_CREATE, PROJECT_WRITE), then store it with `{bin} auth modrinth-token`"
+            ),
         ),
         StatusCode::BAD_REQUEST if reason.to_ascii_lowercase().contains("slug") => Error::usage(
             what,
             format!(
-                "set `{NAME}.slug` in {DIR}/{PAGE_TOML} to a free slug (lowercase letters, digits and dashes); when it is empty, the slug is derived from the pack name"
+                "set `{NAME}.slug` in {DIR}/{PAGE_TOML} to a free slug (lowercase letters, digits and dashes); when it is empty, the slug is derived from the project name"
             ),
         ),
         StatusCode::BAD_REQUEST => Error::usage(what, format!("fix {DIR}/ accordingly")),
@@ -442,8 +438,8 @@ fn check(mut response: Response<Body>, path: &str) -> Result<Response<Body>> {
     })
 }
 
-fn read(response: Response<Body>, path: &str) -> Result<Remote> {
-    check(response, path)?
+fn read(response: Response<Body>, path: &str, bin: &str) -> Result<Remote> {
+    check(response, path, bin)?
         .body_mut()
         .read_json()
         .context(format!("reading the answer of Modrinth to {path}"))

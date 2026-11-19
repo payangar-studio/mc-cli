@@ -171,7 +171,7 @@ fn a_platform_without_project_is_skipped_with_a_notice() {
     assert!(env.contains("MODRINTH_PROJECT=AbC\n"), "{env}");
     assert!(env.contains("PUBLISH_PLATFORMS=modrinth\n"), "{env}");
     assert!(summary.contains("curseforge skipped"), "{summary}");
-    assert!(summary.contains("modpack-curseforge-page"), "{summary}");
+    assert!(summary.contains("mc-curseforge-page"), "{summary}");
 
     // A dry run builds every platform asked.
     let (ok, env, _) = find_projects(MODRINTH_ONLY, "modrinth curseforge", true);

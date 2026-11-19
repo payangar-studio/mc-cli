@@ -217,7 +217,7 @@ impl Platform for CurseForge {
 
     fn capability(&self, op: Operation) -> Capability {
         match op {
-            Operation::PushPage => Capability::Skill("modpack-curseforge-page"),
+            Operation::PushPage => Capability::Skill("mc-curseforge-page"),
             _ => Capability::Api,
         }
     }

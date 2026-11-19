@@ -17,6 +17,7 @@ The design lives in `payangar-studio/environment`, branch `design`, files 00-cad
 - `crates/modpack/src/socle/`: the modpack socle (`SOCLE`: directory, templates, markers) over the mechanics of `crates/mc-core/src/socle/`, and the socle version check that `Context::require_root` runs for every command working in a repository.
 - `crates/modpack/src/conditions/`: the checks behind `modpack test`. Static ones read the manifest; `server-starts` installs the loader's server once into the machine cache (`<cache dir>/modpack/servers`) through `crates/mc-core/src/server/`, then starts it with the variant's jars and config until `Done`.
 - `crates/modpack/templates/`: templates the binary embeds. `socle/`: files the socle owns, at their path in the pack, rewritten by `update`. `blocks/`: blocks between markers in `AGENTS.md` and `.gitignore`. `project/`: the pack skeleton, written once by `init`. Adding a file to `socle/` or `project/` needs no code change; each issue adds its templates under its own path.
+- `crates/mc-core/templates/socle/`: files every socle owns whatever the project type (skills shared by the binaries, named `mc-*`), laid down with each socle's own files.
 - `crates/modpack/tests/`: integration tests of the binary; `crates/modpack/tests/fixtures/`: their fixtures.
 
 ## Who edits what

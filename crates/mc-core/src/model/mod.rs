@@ -2,6 +2,7 @@
 //! them. Nothing here talks to the network.
 
 pub mod entry;
+pub mod side;
 pub mod socle;
 
 use std::fs;

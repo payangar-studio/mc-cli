@@ -43,6 +43,32 @@ fn init_lays_down_the_page_skeleton() {
     }
 }
 
+/// The CurseForge page skill is the one the shared crate lays down for every
+/// socle, and the instructions block names it.
+#[test]
+fn init_lays_down_the_shared_curseforge_page_skill() {
+    let (_tmp, root) = init_repo();
+    let skill = root.join(".claude/skills/mc-curseforge-page/SKILL.md");
+    let text = std::fs::read_to_string(&skill).unwrap();
+    assert!(text.contains("name: mc-curseforge-page"));
+    assert!(!root.join(".claude/skills/modpack-curseforge-page").exists());
+    let agents = std::fs::read_to_string(root.join("AGENTS.md")).unwrap();
+    assert!(agents.contains("`mc-curseforge-page`"));
+    let lock = std::fs::read_to_string(root.join(".modpack/socle.lock")).unwrap();
+    assert!(lock.contains(".claude/skills/mc-curseforge-page/SKILL.md"));
+}
+
+/// CurseForge has no API for the page: it names the skill to run.
+#[test]
+fn curseforge_names_the_shared_skill() {
+    let (_tmp, root) = init_repo();
+    modpack(&root)
+        .args(["page", "push", "--platform", "curseforge"])
+        .assert()
+        .success()
+        .stdout("curseforge: no API for the page; run the `mc-curseforge-page` skill to push it\n");
+}
+
 #[test]
 fn skeleton_page_asks_for_a_summary_before_any_call() {
     let (_tmp, root) = init_repo();

@@ -5,6 +5,7 @@
 //! `deps-complete` condition looks up among the other entries' `project_id`.
 
 pub mod client;
+pub mod page;
 #[cfg(test)]
 mod tests;
 
@@ -16,6 +17,8 @@ use serde_json::json;
 use super::{Candidate, Capability, Download, Jar, Match, Operation, Platform, ProjectName};
 use crate::error::{Error, Result};
 use crate::model::entry::{Entry, Env, Kind, Pack, Support};
+use crate::page::{Listing, Page};
+use crate::secrets::{SecretName, Secrets};
 use client::Client;
 
 pub const NAME: &str = "modrinth";
@@ -100,6 +103,11 @@ impl Platform for Modrinth {
 
     fn capability(&self, _op: Operation) -> Capability {
         Capability::Api
+    }
+
+    fn push_page(&self, page: &Page, listing: &Listing) -> Result<String> {
+        let token = Secrets::system().get(SecretName::ModrinthToken)?;
+        page::push(&self.client, page, &token, listing)
     }
 
     fn project_name(&self, id: &str) -> Result<Option<ProjectName>> {

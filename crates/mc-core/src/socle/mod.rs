@@ -11,6 +11,10 @@
 //!   recorded in the registry as blocks;
 //! - `project`: the skeleton of the project's content, written once by
 //!   `init` when missing, never recorded, never touched again.
+//!
+//! Every socle also owns the files of [`SHARED`] (`templates/socle/` of this
+//! crate): the skills that serve every project type, such as the CurseForge
+//! page. They are written, recorded and rewritten with the socle's own files.
 
 pub mod blocks;
 
@@ -18,7 +22,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Once;
 
-use include_dir::Dir;
+use include_dir::{Dir, include_dir};
 use semver::Version;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -29,6 +33,10 @@ use crate::model::socle::{
 };
 use crate::model::{sha256_bytes, sha256_file};
 use blocks::Markers;
+
+/// Files every socle owns, whatever the project type, at their path in the
+/// repository.
+pub static SHARED: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/templates/socle");
 
 /// The instructions file, and the link that points Claude at it.
 const AGENTS_MD: &str = "AGENTS.md";
@@ -46,7 +54,8 @@ pub struct Socle {
     pub tool: &'static str,
     /// Version of the CLI, which is also the version of the socle it writes.
     pub version: &'static str,
-    /// Files the socle owns, at their path in the repository.
+    /// Files the socle owns, at their path in the repository, besides the
+    /// [`SHARED`] ones.
     pub files: &'static Dir<'static>,
     /// Blocks, one template file each.
     pub blocks: &'static Dir<'static>,
@@ -93,9 +102,12 @@ impl Socle {
         Version::parse(self.version).expect("the crate version is semver")
     }
 
-    /// Every file of the socle, sorted by path.
+    /// Every file of the socle, its own and the shared ones, sorted by path.
     pub fn socle_files(&self) -> Vec<Template> {
-        files_of(self.files)
+        let mut files = files_of(self.files);
+        files.extend(files_of(&SHARED));
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        files
     }
 
     /// Every file of the project skeleton, sorted by path.
@@ -444,6 +456,30 @@ pub(crate) static TEST: Socle = {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A socle with no file of its own still lays down the shared ones, and
+    /// a shared skill is a Claude Code skill named after its directory.
+    #[test]
+    fn every_socle_owns_the_shared_skills() {
+        let files = TEST.socle_files();
+        let skill = files
+            .iter()
+            .find(|t| t.path == ".claude/skills/mc-curseforge-page/SKILL.md")
+            .expect("the CurseForge page skill is shared");
+        let text = std::str::from_utf8(skill.contents).unwrap();
+        assert!(text.starts_with("---\nname: mc-curseforge-page\ndescription: "));
+        assert!(text.contains("Use when"));
+        assert!(!text.contains('\u{2014}'));
+        for file in &files {
+            if let Some(rest) = file.path.strip_prefix(".claude/skills/") {
+                assert!(
+                    rest.starts_with("mc-"),
+                    "{}: shared skills are prefixed `mc-`",
+                    file.path
+                );
+            }
+        }
+    }
 
     #[cfg(unix)]
     #[test]

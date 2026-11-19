@@ -1486,6 +1486,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml",
+ "toml_edit",
  "tracing",
  "ureq",
  "windows-native-keyring-store",

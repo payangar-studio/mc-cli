@@ -124,6 +124,112 @@ fn init_without_terminal_and_without_name_names_the_argument() {
     assert!(!tmp.path().join("pack").exists());
 }
 
+/// Writes the machine configuration that `modpack(dir)` reads.
+fn write_machine_config(dir: &Path, text: &str) {
+    let path = dir.join(".machine-config/minecraft/config.toml");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, text).unwrap();
+}
+
+/// `INIT_ARGS` without `--author`.
+fn init_args_without_author() -> Vec<&'static str> {
+    INIT_ARGS
+        .iter()
+        .copied()
+        .filter(|a| !a.starts_with("--author"))
+        .collect()
+}
+
+#[test]
+fn init_takes_the_author_from_the_machine_configuration_and_copies_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_machine_config(
+        tmp.path(),
+        "[identity]\nauthor = \"Payangar\"\npackage = \"com.payangar\"\n",
+    );
+    // No terminal: success means the author was not asked for.
+    modpack(tmp.path())
+        .arg("init")
+        .arg("pack")
+        .args(init_args_without_author())
+        .assert()
+        .success();
+    let root = tmp.path().join("pack");
+    assert_eq!(
+        SocleConfig::load(&SOCLE, &root).unwrap().init.author,
+        "Payangar"
+    );
+    assert!(read(&root, ".modpack/socle.toml").contains("author = \"Payangar\"\n"));
+}
+
+#[test]
+fn init_author_argument_overrides_the_machine_configuration() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_machine_config(tmp.path(), "[identity]\nauthor = \"Payangar\"\n");
+    modpack(tmp.path())
+        .arg("init")
+        .arg("pack")
+        .args(INIT_ARGS)
+        .assert()
+        .success();
+    let config = SocleConfig::load(&SOCLE, &tmp.path().join("pack")).unwrap();
+    assert_eq!(config.init.author, "Tester");
+}
+
+#[test]
+fn init_without_terminal_nor_machine_author_names_the_argument() {
+    let tmp = tempfile::tempdir().unwrap();
+    modpack(tmp.path())
+        .arg("init")
+        .arg("pack")
+        .args(init_args_without_author())
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("pass --author"))
+        .stderr(predicate::str::contains(
+            Path::new("minecraft")
+                .join("config.toml")
+                .display()
+                .to_string(),
+        ));
+    assert!(!tmp.path().join("pack").exists());
+}
+
+#[test]
+fn commands_other_than_init_never_read_the_machine_identity() {
+    let (_tmp, root) = init_repo();
+    // Unreadable on purpose: a command reading it would fail.
+    write_machine_config(&root, "not toml [");
+    make_older(&root);
+    modpack(&root).arg("update").assert().success();
+    modpack(&root).args(["variant", "list"]).assert().success();
+
+    // And in the source: only `init` uses the machine identity. Comments
+    // do not count; any path to it (module, re-export, alias) names one of
+    // these in code.
+    const ENTRY_POINTS: &[&str] = &["machine_config", "MachineIdentity", "Identity::load"];
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut readers = Vec::new();
+    let mut dirs = vec![src.clone()];
+    while let Some(dir) = dirs.pop() {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+                continue;
+            }
+            let uses = fs::read_to_string(&path).unwrap().lines().any(|line| {
+                let code = line.split("//").next().unwrap();
+                ENTRY_POINTS.iter().any(|e| code.contains(e))
+            });
+            if uses {
+                readers.push(path.strip_prefix(&src).unwrap().to_owned());
+            }
+        }
+    }
+    assert_eq!(readers, [Path::new("cli/init.rs")]);
+}
+
 #[test]
 fn init_refuses_a_directory_that_holds_a_socle() {
     let (tmp, _root) = init_repo();

@@ -22,7 +22,7 @@ The Modrinth App must be installed for `modpack setup` to create the pack's inst
 
 | Command | What it does |
 |---|---|
-| `modpack init [dir] --name --mc-version --loader --loader-version --author` | Creates a modpack repository: socle, layout, default variant. Asks for each value not given. |
+| `modpack init [dir] --name --mc-version --loader --loader-version --author` | Creates a modpack repository: socle, layout, default variant. Asks for each value not given. `--author` defaults to `author` under `[identity]` in the machine configuration, `<user config dir>/minecraft/config.toml`, shared by every binary; when asked for, it can be saved there. |
 | `modpack setup [--no-launch]` | Prepares a clone on this machine: enables the git hooks, downloads the jars, registers the instance in the Modrinth App (one click to confirm the import), loads the default variant. Safe to run again. |
 | `modpack update [--force]` | Brings the repository's socle to this CLI's version. Stops on socle files edited by hand, unless `--force`. |
 | `modpack add <mod> [--version] [--variant]... [--with-deps] [--url] [--force]` | Adds a mod or a resource pack from Modrinth or CurseForge (slug, id or URL) or from a local file (`.jar` for a mod, `.zip` for a resource pack), and updates the manifest, in every variant or only in the variants named: `--variant` repeats, `default` names the default variant, and `--variant default` alone keeps the mod in the default variant only. Asks for the version when several fit. On a mod already in the pack, `--with-deps` adds only its missing dependencies. An entry from a platform whose slug is the key of a local entry of the same type replaces it, and its file leaves git; it stops when that file is not committed, unless `--force`. |

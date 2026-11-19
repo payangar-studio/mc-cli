@@ -3,6 +3,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use mc_core::machine_config::{IdentityField, MachineIdentity};
+
 use crate::context::{Context, SOCLE_DIR};
 use crate::error::{Context as _, Error, Result};
 use crate::model::socle::InitValues;
@@ -27,7 +29,7 @@ pub struct Args {
     /// Mod loader version
     #[arg(long)]
     pub loader_version: Option<String>,
-    /// Author of the modpack
+    /// Author of the modpack; defaults to `author` under `[identity]` in the machine configuration
     #[arg(long)]
     pub author: Option<String>,
 }
@@ -55,7 +57,8 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
         ));
     }
     let loader_version = p.text(args.loader_version, "--loader-version", "Loader version")?;
-    let author = p.text(args.author, "--author", "Author")?;
+    let author =
+        MachineIdentity::new().resolve(p, args.author, IdentityField::Author, "--author")?;
 
     std::fs::create_dir_all(&dir).context(format!("creating {}", dir.display()))?;
     git_init(&dir)?;

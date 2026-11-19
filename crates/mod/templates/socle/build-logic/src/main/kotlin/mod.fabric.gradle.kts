@@ -106,6 +106,11 @@ dependencies {
     "gametestImplementation"(fabricApi)
     "productionRuntimeMods"(fabricApi)
 }
+// fabric-loader-junit starts Fabric Loader as a client unless told otherwise,
+// and a server mod does not load on a client.
+if (!mod.hasClient) {
+    tasks.named<Test>("test") { systemProperty("fabric.side", "server") }
+}
 
 // Fabric API reads these properties.
 val gametestReport = layout.buildDirectory.file("test-results/runGameTest/report.xml")

@@ -11,6 +11,7 @@ pub mod auth;
 pub mod error;
 pub mod fetch;
 pub mod hash;
+pub mod machine_config;
 pub mod model;
 pub mod page;
 pub mod platform;

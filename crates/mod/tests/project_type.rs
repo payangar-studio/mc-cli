@@ -8,7 +8,7 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 
 /// Every command that works in a repository. `init` is not guarded.
-const COMMANDS: &[&[&str]] = &[&["update"]];
+const COMMANDS: &[&[&str]] = &[&["update"], &["port", "26.3"]];
 
 fn bin(dir: &Path) -> Command {
     let mut cmd = Command::cargo_bin("mod").unwrap();

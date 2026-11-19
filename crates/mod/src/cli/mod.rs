@@ -9,6 +9,7 @@ use crate::context::Context;
 use crate::error::Result;
 
 pub mod init;
+pub mod port;
 pub mod setup;
 pub mod update;
 
@@ -47,6 +48,8 @@ pub enum Command {
     Update(update::Args),
     /// Configure the mod's GitHub repository: ruleset of the release tags, vault variables, CODEOWNERS
     Setup(setup::Args),
+    /// Port the mod to another Minecraft version, on a new branch named after it
+    Port(port::Args),
 }
 
 pub fn run(command: Command, ctx: &Context) -> Result<()> {
@@ -54,6 +57,7 @@ pub fn run(command: Command, ctx: &Context) -> Result<()> {
         Command::Init(args) => init::run(args, ctx),
         Command::Update(args) => update::run(args, ctx),
         Command::Setup(args) => setup::run(args, ctx),
+        Command::Port(args) => port::run(args, ctx),
     }
 }
 

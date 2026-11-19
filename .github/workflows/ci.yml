@@ -37,8 +37,8 @@ jobs:
       - name: Test that check
         run: bash scripts/test-check-workflow-pins.sh
       # A pinned release, checked against its published checksum. The runner's
-      # shellcheck lints the `run` scripts too. The socle's workflow template is
-      # linted with this repository's own workflows: it ships into every pack.
+      # shellcheck lints the `run` scripts too. The socles' workflow templates are
+      # linted with this repository's own workflows: they ship into every project.
       - name: Lint the workflows
         env:
           VERSION: 1.7.12
@@ -48,7 +48,7 @@ jobs:
           curl -sSfLO "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/${archive}"
           echo "${SHA256}  ${archive}" | sha256sum -c -
           tar xzf "$archive" actionlint
-          ./actionlint -color .github/workflows/*.yml crates/modpack/templates/socle/.github/workflows/*.yml
+          ./actionlint -color .github/workflows/*.yml crates/modpack/templates/socle/.github/workflows/*.yml crates/mod/templates/socle/.github/workflows/*.yml
 
   # Builds projects made by `mod init` with Gradle: both loaders, each alone,
   # the loader metadata for each side, the client split of `common`.

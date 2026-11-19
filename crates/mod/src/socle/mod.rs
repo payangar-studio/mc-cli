@@ -3,10 +3,12 @@
 //!
 //! - `templates/socle/`: files the socle owns, written at the same relative
 //!   path, recorded in the registry and rewritten by every update: the Gradle
-//!   wrapper, the root settings, and `build-logic/`, which holds the whole
-//!   build and fills the loader metadata from `mod.toml`;
+//!   wrapper, the root settings, `build-logic/`, which holds the whole build
+//!   and fills the loader metadata from `mod.toml`, and the harness: the
+//!   `editing-agents-md` skill, its check under `.mod/scripts/` and its
+//!   workflow;
 //! - `templates/blocks/`: blocks between markers in a file the mod owns
-//!   otherwise (`.gitignore`);
+//!   otherwise (`AGENTS.md`, `.gitignore`);
 //! - `templates/skeleton/`: the mod's own files, written once by `init` when
 //!   missing ([`skeleton`]): `mod.toml`, the subproject build scripts, the
 //!   entrypoints, the page. Their paths depend on the package, the loaders and
@@ -54,7 +56,10 @@ pub static SOCLE: Socle = Socle {
     files: &FILES,
     blocks: &BLOCKS,
     project: &PROJECT,
-    block_targets: &[("gitignore", ".gitignore", HASH)],
+    block_targets: &[
+        ("agents.md", "AGENTS.md", HTML),
+        ("gitignore", ".gitignore", HASH),
+    ],
     html: HTML,
     hash: HASH,
 };

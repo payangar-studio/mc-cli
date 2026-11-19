@@ -1,0 +1,17 @@
+# Fixture of the workflow template lint (tests/workflow_templates.rs).
+name: Fixture
+
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  job:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: console.log("${{ github.event.pull_request.title }}")

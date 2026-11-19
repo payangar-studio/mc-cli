@@ -1,0 +1,40 @@
+[package]
+name = "mc-core"
+version.workspace = true
+edition.workspace = true
+description = "Code shared by the Minecraft CLIs: secrets, platforms, socle mechanics, dedicated server"
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Test doubles (an in-memory platform, fixed HTTP answers) for the tests of
+# the crates built on this one.
+fake = []
+
+[dependencies]
+clap.workspace = true
+dialoguer.workspace = true
+directories.workspace = true
+include_dir.workspace = true
+semver.workspace = true
+serde.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+toml.workspace = true
+tracing.workspace = true
+keyring-core.workspace = true
+serde_json.workspace = true
+ureq.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus-secret-service-keyring-store.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-native-keyring-store.workspace = true
+
+[dev-dependencies]
+mockito.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+wiremock.workspace = true

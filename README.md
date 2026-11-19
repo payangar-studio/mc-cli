@@ -87,7 +87,7 @@ Running the workflow by hand (Actions, Publish, Run workflow) from the tag publi
 
 ## Development
 
-`AGENTS.md` describes the layout, the conventions and how to run the tests. Pushing a `v*` tag on this repository publishes a release with the static Linux binary.
+The repository is a Cargo workspace: `crates/modpack/` builds the `modpack` binary, and `crates/mc-core/` holds the code the CLIs share (secrets, platforms, socle mechanics, mod resolution, dedicated server). `AGENTS.md` describes the layout, the conventions and how to run the tests. Pushing a `v*` tag on this repository publishes a release with the static Linux binary.
 
 ## License
 

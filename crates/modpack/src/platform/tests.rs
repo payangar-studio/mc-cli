@@ -191,6 +191,6 @@ fn without_a_key_missing_ids_blame_the_key_not_the_hosting() {
     assert!(!reason.contains("not hosted"), "{reason}");
     assert!(reason.contains("no CurseForge Core API key"), "{reason}");
     assert!(reason.contains("`modpack auth`"), "{reason}");
-    assert!(reason.contains("MODPACK_CURSEFORGE_API_KEY"), "{reason}");
+    assert!(reason.contains("MC_CURSEFORGE_API_KEY"), "{reason}");
     assert!(reason.contains("`modpack manifest`"), "{reason}");
 }

@@ -111,6 +111,21 @@ fn the_reusable_workflow_builds_the_packs_without_the_jars() {
     }
 }
 
+/// The vault keys are the neutral names both binaries read, never the old
+/// `MODPACK_` ones.
+#[test]
+fn the_reusable_workflow_reads_the_neutral_vault_keys() {
+    let workflow = reusable();
+    assert!(workflow.contains("for name in MC_MODRINTH_TOKEN MC_CURSEFORGE_UPLOAD_TOKEN; do"));
+    for old in [
+        "MODPACK_MODRINTH_TOKEN",
+        "MODPACK_CURSEFORGE_UPLOAD_TOKEN",
+        "MODPACK_CURSEFORGE_API_KEY",
+    ] {
+        assert!(!workflow.contains(old), "the workflow references {old}");
+    }
+}
+
 fn reusable() -> String {
     fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/publish-modpack.yml"),

@@ -19,7 +19,7 @@ The audit is a gap, not a lock. It looks at what changed since the commit the la
 - **Read-only, except two things**: the report `audit/last.toml`, and the config files the user agrees to delete.
 - **Say where each warning comes from**: a platform's API, the jar's own metadata, a command's output, or your own knowledge of the mods. A warning from your knowledge is a hypothesis; say so.
 - **Never edit `modpack.lock.toml` or `variants.toml` to fix a finding.** Propose the command (`modpack remove`, `modpack add`) or the change to `variants.toml`, and let the user decide.
-- **Secrets never pass through the conversation.** CurseForge is only ever asked with `$MODPACK_CURSEFORGE_API_KEY` inside a command, when it is set.
+- **Secrets never pass through the conversation.** CurseForge is only ever asked with `$MC_CURSEFORGE_API_KEY` inside a command, when it is set.
 
 Run every command from the repository root.
 
@@ -71,7 +71,7 @@ A mod with no `[entries.curseforge]` table may simply have been added while no C
 
 ### Known conflicts and target
 
-- **Declared by the platform**: `curl -s https://api.modrinth.com/v2/version/<version_id>` lists `dependencies` with a `dependency_type`; an `incompatible` project the pack has (`grep -n 'project_id = "<id>"' modpack.lock.toml`) is a conflict. With the key set (`test -n "$MODPACK_CURSEFORGE_API_KEY"`), `curl -s -H "x-api-key: $MODPACK_CURSEFORGE_API_KEY" https://api.curseforge.com/v1/mods/<projectID>/files/<fileID>` lists `dependencies` where `relationType` 5 means incompatible.
+- **Declared by the platform**: `curl -s https://api.modrinth.com/v2/version/<version_id>` lists `dependencies` with a `dependency_type`; an `incompatible` project the pack has (`grep -n 'project_id = "<id>"' modpack.lock.toml`) is a conflict. With the key set (`test -n "$MC_CURSEFORGE_API_KEY"`), `curl -s -H "x-api-key: $MC_CURSEFORGE_API_KEY" https://api.curseforge.com/v1/mods/<projectID>/files/<fileID>` lists `dependencies` where `relationType` 5 means incompatible.
 - **Declared by the jar**: `unzip -p mods/<file> META-INF/neoforge.mods.toml` (or `META-INF/mods.toml`): `[[dependencies.<modId>]]` with `type = "incompatible"`, and the `minecraft` and loader version ranges; `unzip -p mods/<file> fabric.mod.json`: `breaks` and `conflicts`, and `depends.minecraft`.
 - **Target**: the version's `game_versions` and `loaders` on Modrinth, or the ranges in the jar, must include the `[pack]` table's `minecraft` and `loader`.
 - **From your knowledge**: mods known to clash (two mods replacing the same renderer or the same system, a mod that another one already bundles). Mark these as hypotheses; the `modpack-source` skill can confirm one by reading the code.

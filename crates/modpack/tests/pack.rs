@@ -27,7 +27,7 @@ fn modpack(dir: &Path) -> Command {
     // missing key for the fixture's mods that are not on CurseForge.
     cmd.current_dir(dir)
         .env_remove("RUST_LOG")
-        .env("MODPACK_CURSEFORGE_API_KEY", "test-key");
+        .env("MC_CURSEFORGE_API_KEY", "test-key");
     cmd
 }
 

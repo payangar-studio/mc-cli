@@ -169,6 +169,7 @@ fn changes<'a>(from: &'a Versions, to: &'a Versions) -> Vec<(&'static str, &'a s
         ("loom", &from.loom, &to.loom),
         ("neoforge", &from.neoforge, &to.neoforge),
         ("moddevgradle", &from.moddevgradle, &to.moddevgradle),
+        ("modmenu", &from.modmenu, &to.modmenu),
     ]
     .into_iter()
     .filter(|(_, a, b)| a != b)
@@ -228,6 +229,7 @@ mod tests {
             loom: "1.20.1",
             neoforge: "26.4.0.7",
             moddevgradle: "2.0.150",
+            modmenu: "21.1.0",
         },
         Pinned {
             minecraft: "26.3",
@@ -236,6 +238,7 @@ mod tests {
             loom: "1.19.4",
             neoforge: "26.3.0.113",
             moddevgradle: "2.0.148",
+            modmenu: "21.0.1",
         },
     ];
 
@@ -374,6 +377,7 @@ mod tests {
              \x20 loom: 1.19.4 -> 1.20.1\n\
              \x20 neoforge: 26.3.0.113 -> 26.4.0.7\n\
              \x20 moddevgradle: 2.0.148 -> 2.0.150\n\
+             \x20 modmenu: 21.0.1 -> 21.1.0\n\
              Nothing is committed. Build with `./gradlew build`, then follow the `mod-port` skill to fix what breaks.\n"
         );
     }

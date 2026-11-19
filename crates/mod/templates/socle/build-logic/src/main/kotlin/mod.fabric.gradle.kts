@@ -52,6 +52,21 @@ dependencies {
     }
 }
 
+// The shared library opens its config screen from Mod Menu when the player
+// has it; the mod does not depend on it. Mod Menu is compiled against, and its
+// entrypoint declared, once the library's class is there.
+val modMenuEntrypoint = file("src/client/java/${mod.pkg.replace('.', '/')}/vendor/fabric/ModMenuEntrypoint.java")
+if (modMenuEntrypoint.isFile) {
+    repositories {
+        maven("https://maven.terraformersmc.com/releases/") {
+            content { includeGroup("com.terraformersmc") }
+        }
+    }
+    dependencies {
+        "clientCompileOnly"("com.terraformersmc:modmenu:${pinned.modmenu}")
+    }
+}
+
 if (hasCommon) {
     val mainClasses = fromCommon("commonMainClasses")
     val clientClasses = fromCommon("commonClientClasses")
@@ -71,7 +86,7 @@ if (hasCommon) {
 }
 
 val generateModMetadata = tasks.register<Copy>("generateModMetadata") {
-    val values = ModMetadata.fabric(mod, pinned, project.version.toString())
+    val values = ModMetadata.fabric(mod, pinned, project.version.toString(), modMenuEntrypoint.isFile)
     inputs.properties(values)
     from(rootDir.resolve("build-logic/templates/fabric.mod.json"))
     expand(values)

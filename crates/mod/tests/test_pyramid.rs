@@ -10,6 +10,8 @@ use std::process::{Command as Process, Output};
 
 use assert_cmd::Command;
 
+mod library;
+
 const PACKAGE_DIR: &str = "com/payangar/swiftblades";
 
 /// A project made by `mod init` in `<tmp>/mod`.
@@ -288,4 +290,35 @@ fn a_changed_render_fails_the_screenshot_test() {
         "Template image does not exist",
     );
     assert!(!reference.exists(), "the run wrote a reference");
+}
+
+/// The shared library's config screens on a Fabric client
+/// (`ConfigScreenClientGameTest`, copied with the library): the generated
+/// screen and the widget states match their reference renders, and settings
+/// changed with the mouse and the keyboard reach the JSON file.
+#[test]
+#[ignore = "downloads Gradle, the loaders and Minecraft, starts the game"]
+fn library_config_screens_pass_on_a_client() {
+    let (_tmp, root) = init("fabric,neoforge", "both-required");
+    library::copy(&root, "swift_blades", "com.payangar.swiftblades", "common");
+    let output = gradle(&root, &[":fabric:runClientGameTest"]);
+    keep_runs(&root, "library_config_screens_pass_on_a_client");
+    assert!(
+        output.status.success(),
+        "./gradlew :fabric:runClientGameTest failed"
+    );
+    // The comparisons saved the renders they took: the CI artifact to promote.
+    for name in [
+        "vendor_config_screen",
+        "vendor_widget_states",
+        "vendor_dropdown_open",
+    ] {
+        assert!(
+            root.join(format!(
+                "fabric/build/run/clientGameTest/screenshots/{name}.png"
+            ))
+            .is_file(),
+            "{name}.png was not saved"
+        );
+    }
 }

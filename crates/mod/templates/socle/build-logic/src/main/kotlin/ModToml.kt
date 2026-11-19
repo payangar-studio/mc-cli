@@ -100,6 +100,7 @@ data class Pinned(
     val fabricLoader: String,
     val fabricApi: String,
     val neoforge: String,
+    val modmenu: String,
 ) {
     companion object {
         fun read(file: File): Pinned {
@@ -111,6 +112,7 @@ data class Pinned(
                 fabricLoader = pinned("fabric-loader"),
                 fabricApi = pinned("fabric-api"),
                 neoforge = pinned("neoforge"),
+                modmenu = pinned("modmenu"),
             )
         }
     }

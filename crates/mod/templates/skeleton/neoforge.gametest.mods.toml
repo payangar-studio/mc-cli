@@ -1,0 +1,7 @@
+# The test mod of the gametests, loaded only by `runGameTestServer`.
+license = "{{license_toml}}"
+
+[[mods]]
+modId = "{{id}}_gametest"
+version = "0.0.0"
+displayName = "{{id}} gametests"

@@ -12,7 +12,12 @@
 //! - each loader calls them from its entrypoints, in `<package>.<loader>`. The
 //!   Fabric ones are named in the generated `fabric.mod.json`
 //!   (`build-logic/src/main/kotlin/ModMetadata.kt`): renaming them breaks it;
-//! - a server-only mod has no client code.
+//! - a server-only mod has no client code;
+//! - one example test per layer the loaders run (`docs/mod-tests.md`): unit
+//!   tests beside the shared code, a Fabric Loader one in `fabric/`, NeoForge
+//!   integration tests in `neoforge/`, and the gametests of each loader in its
+//!   `src/gametest`, a test mod `<id>_gametest` whose Fabric client gametest
+//!   compares a render with `templates/example_world.png`, taken in CI.
 
 use crate::model::mod_toml::{Loader, ModToml};
 
@@ -21,7 +26,7 @@ use crate::model::mod_toml::{Loader, ModToml};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct File {
     pub path: String,
-    pub contents: String,
+    pub contents: Vec<u8>,
 }
 
 /// Every file of the skeleton of `module`.
@@ -53,12 +58,12 @@ pub fn files(module: &ModToml) -> Vec<File> {
     // mod.toml is written as serialized, never filled: it holds the values.
     let mut out = vec![File {
         path: "mod.toml".into(),
-        contents: module.to_toml(),
+        contents: module.to_toml().into_bytes(),
     }];
     let mut add = |path: String, template: &str| {
         out.push(File {
             path,
-            contents: fill(template),
+            contents: fill(template).into_bytes(),
         })
     };
     add(
@@ -83,6 +88,14 @@ pub fn files(module: &ModToml) -> Vec<File> {
         format!("{shared}/src/main/java/{package}/CommonEntrypoint.java"),
         include_str!("../../templates/skeleton/CommonEntrypoint.java"),
     );
+    add(
+        format!("{shared}/src/test/java/{package}/GameBootstrap.java"),
+        include_str!("../../templates/skeleton/GameBootstrap.java"),
+    );
+    add(
+        format!("{shared}/src/test/java/{package}/ExampleUnitTest.java"),
+        include_str!("../../templates/skeleton/ExampleUnitTest.java"),
+    );
     if client {
         add(
             format!("{shared}/src/{client_set}/java/{package}/client/ClientEntrypoint.java"),
@@ -106,6 +119,22 @@ pub fn files(module: &ModToml) -> Vec<File> {
                 include_str!("../../templates/skeleton/FabricClientEntrypoint.java"),
             );
         }
+        add(
+            format!("fabric/src/test/java/{package}/fabric/FabricLoaderTest.java"),
+            include_str!("../../templates/skeleton/FabricLoaderTest.java"),
+        );
+        add(
+            "fabric/src/gametest/resources/fabric.mod.json".into(),
+            include_str!("../../templates/skeleton/fabric.gametest.mod.json"),
+        );
+        add(
+            format!("fabric/src/gametest/java/{package}/gametest/ExampleServerGameTest.java"),
+            include_str!("../../templates/skeleton/FabricExampleServerGameTest.java"),
+        );
+        add(
+            format!("fabric/src/gametest/java/{package}/gametest/ExampleClientGameTest.java"),
+            include_str!("../../templates/skeleton/FabricExampleClientGameTest.java"),
+        );
     }
     if has(Loader::Neoforge) {
         add(
@@ -124,6 +153,25 @@ pub fn files(module: &ModToml) -> Vec<File> {
                 include_str!("../../templates/skeleton/NeoForgeClientEntrypoint.java"),
             );
         }
+        add(
+            format!("neoforge/src/test/java/{package}/neoforge/ExampleIntegrationTest.java"),
+            include_str!("../../templates/skeleton/NeoForgeExampleIntegrationTest.java"),
+        );
+        add(
+            "neoforge/src/gametest/resources/META-INF/neoforge.mods.toml".into(),
+            include_str!("../../templates/skeleton/neoforge.gametest.mods.toml"),
+        );
+        add(
+            format!("neoforge/src/gametest/java/{package}/gametest/ExampleServerGameTest.java"),
+            include_str!("../../templates/skeleton/NeoForgeExampleServerGameTest.java"),
+        );
+    }
+    if has(Loader::Fabric) {
+        // The reference render of the example client gametest, taken in CI.
+        out.push(File {
+            path: "fabric/src/gametest/resources/templates/example_world.png".into(),
+            contents: include_bytes!("../../templates/skeleton/example_world.png").to_vec(),
+        });
     }
     out
 }
@@ -214,6 +262,17 @@ mod tests {
             "mod.toml".to_owned(),
             "page/page.toml".to_owned(),
             "changelogs/README.md".to_owned(),
+            // One example test per layer, where each loader runs it.
+            format!("common/src/test/java/{PKG}/GameBootstrap.java"),
+            format!("common/src/test/java/{PKG}/ExampleUnitTest.java"),
+            format!("fabric/src/test/java/{PKG}/fabric/FabricLoaderTest.java"),
+            "fabric/src/gametest/resources/fabric.mod.json".to_owned(),
+            format!("fabric/src/gametest/java/{PKG}/gametest/ExampleServerGameTest.java"),
+            format!("fabric/src/gametest/java/{PKG}/gametest/ExampleClientGameTest.java"),
+            "fabric/src/gametest/resources/templates/example_world.png".to_owned(),
+            format!("neoforge/src/test/java/{PKG}/neoforge/ExampleIntegrationTest.java"),
+            "neoforge/src/gametest/resources/META-INF/neoforge.mods.toml".to_owned(),
+            format!("neoforge/src/gametest/java/{PKG}/gametest/ExampleServerGameTest.java"),
         ] {
             assert!(paths.contains(&path), "{path} missing from {paths:#?}");
         }
@@ -232,7 +291,12 @@ mod tests {
             "fabric/src/client/java/{PKG}/client/ClientEntrypoint.java"
         )));
 
+        assert!(fabric.contains(&format!("fabric/src/test/java/{PKG}/ExampleUnitTest.java")));
+
         let neoforge = paths(&module(&[Loader::Neoforge], Side::BothOptional));
+        assert!(neoforge.contains(&format!(
+            "neoforge/src/test/java/{PKG}/ExampleUnitTest.java"
+        )));
         assert!(
             neoforge
                 .iter()
@@ -255,25 +319,18 @@ mod tests {
             &[Loader::Fabric, Loader::Neoforge],
             Side::BothRequired,
         ));
-        for file in &files {
-            assert!(
-                !file.contents.contains("{{"),
-                "{} keeps a placeholder",
-                file.path
-            );
+        for file in files.iter().filter(|f| !f.path.ends_with(".png")) {
+            let text = std::str::from_utf8(&file.contents).unwrap();
+            assert!(!text.contains("{{"), "{} keeps a placeholder", file.path);
         }
-        let common = files
-            .iter()
-            .find(|f| f.path.ends_with("/CommonEntrypoint.java"))
-            .unwrap();
-        assert!(
-            common
-                .contents
-                .starts_with("package com.payangar.swiftblades;\n")
-        );
-        assert!(common.contents.contains("MOD_ID = \"swift_blades\""));
-        let page = files.iter().find(|f| f.path == "page/page.toml").unwrap();
-        let page: toml::Table = toml::from_str(&page.contents).unwrap();
+        let text = |suffix: &str| {
+            let file = files.iter().find(|f| f.path.ends_with(suffix)).unwrap();
+            std::str::from_utf8(&file.contents).unwrap()
+        };
+        let common = text("/CommonEntrypoint.java");
+        assert!(common.starts_with("package com.payangar.swiftblades;\n"));
+        assert!(common.contains("MOD_ID = \"swift_blades\""));
+        let page: toml::Table = toml::from_str(text("page/page.toml")).unwrap();
         assert_eq!(page["name"].as_str(), Some("Swift \"Blades\""));
         assert_eq!(page["modrinth"]["license"].as_str(), Some("MIT"));
     }
@@ -284,7 +341,9 @@ mod tests {
         module.name = "Tools {{package}} {{id}}".into();
         module.license = "{{name}}".into();
         let files = files(&module);
-        let file = |path: &str| &files.iter().find(|f| f.path == path).unwrap().contents;
+        let file = |path: &str| {
+            std::str::from_utf8(&files.iter().find(|f| f.path == path).unwrap().contents).unwrap()
+        };
         let toml: ModToml = toml::from_str(file("mod.toml")).unwrap();
         assert_eq!(toml.name, module.name);
         assert_eq!(toml.license, module.license);

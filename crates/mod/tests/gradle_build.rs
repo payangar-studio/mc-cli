@@ -108,6 +108,16 @@ fn builds_with_fabric_only() {
     assert!(jar(&root, "fabric").is_file());
 }
 
+/// A server mod loads in the Fabric Loader of its unit tests, which starts as
+/// a client unless told otherwise.
+#[test]
+#[ignore = "downloads Gradle, Fabric and Minecraft"]
+fn builds_a_fabric_server_mod() {
+    let (_tmp, root) = init("fabric", "server");
+    gradle_ok(&root, &["build"]);
+    assert!(jar(&root, "fabric").is_file());
+}
+
 #[test]
 #[ignore = "downloads Gradle, NeoForge and Minecraft"]
 fn builds_with_neoforge_only() {

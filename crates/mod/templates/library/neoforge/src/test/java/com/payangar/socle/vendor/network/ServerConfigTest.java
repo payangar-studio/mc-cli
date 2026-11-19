@@ -38,6 +38,7 @@ class ServerConfigTest {
     private final ConfigSchema.Builder config = ConfigSchema.builder(MOD_ID, ModSide.BOTH_REQUIRED);
     private final Setting<Integer> range = config.define(Setting.integer("range", Scope.SERVER, 8, 1, 64));
     private final Setting<Boolean> pvp = config.define(Setting.bool("pvp", Scope.SERVER, false));
+    private final Setting<String> motd = config.define(Setting.string("motd", Scope.SERVER, ""));
     private final ModNetwork network = new ModNetwork(config.build());
     private final ServerConfig serverConfig = network.serverConfig();
 
@@ -154,7 +155,33 @@ class ServerConfigTest {
         change(player(server, "operator", LevelBasedPermissionSet.GAMEMASTER), "{\"pvp\": true}");
 
         assertEquals(
-                JsonParser.parseString("{\"range\": 8, \"pvp\": true}"),
-                JsonParser.parseString(serverConfig.sync().values()));
+                JsonParser.parseString("{\"range\": 8, \"pvp\": true, \"motd\": \"\"}"),
+                JsonParser.parseString(serverConfig.sync().orElseThrow().values()));
+    }
+
+    /** Starts the server settings from a file whose {@code motd} is {@code length} characters long. */
+    private void startWithMotd(MinecraftServer server, int length) throws IOException {
+        Files.createDirectories(file(server).getParent());
+        Files.writeString(file(server), "{\"motd\": \"" + "x".repeat(length) + "\"}");
+        serverConfig.start(server);
+    }
+
+    @Test
+    void settingsTooLongForTheirPayloadAreNotSent(MinecraftServer server) throws IOException {
+        startWithMotd(server, ConfigPayloads.MAX_SYNC);
+
+        assertTrue(serverConfig.sync().isEmpty());
+    }
+
+    @Test
+    void aChangeMakingTheSettingsTooLongForTheirPayloadIsRefused(MinecraftServer server) throws IOException {
+        // The settings fill their payload exactly: {"range":8,"pvp":false,"motd":"xx…"}.
+        startWithMotd(server, ConfigPayloads.MAX_SYNC - "{\"range\":8,\"pvp\":false,\"motd\":\"\"}".length());
+        PermissionSet operator = player(server, "operator", LevelBasedPermissionSet.GAMEMASTER);
+        assertTrue(serverConfig.sync().isPresent());
+
+        assertTrue(change(operator, "{\"range\": 16}").isEmpty());
+        assertEquals(8, serverConfig.get(range));
+        assertTrue(serverConfig.sync().isPresent());
     }
 }

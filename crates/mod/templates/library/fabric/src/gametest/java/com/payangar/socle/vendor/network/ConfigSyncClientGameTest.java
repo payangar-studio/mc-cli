@@ -2,7 +2,6 @@ package com.payangar.socle.vendor.network;
 
 import com.google.gson.JsonParser;
 import com.payangar.socle.vendor.config.ConfigFile;
-import com.payangar.socle.vendor.config.ConfigValues;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -17,9 +16,10 @@ import net.minecraft.server.players.NameAndId;
 import net.minecraft.world.level.storage.LevelResource;
 
 /**
- * A client joins a dedicated server and receives its server settings. A change from a player who
- * is not an operator is refused; the same change from an operator is applied, saved in the world,
- * and comes back to the client. A {@code fabric-client-gametest} entrypoint of the gametest mod.
+ * A client joins a dedicated server and receives its server settings; a server-only mod has its
+ * server settings on the server. A change from a player who is not an operator is refused; the
+ * same change from an operator is applied, saved in the world, and comes back to the client. A
+ * {@code fabric-client-gametest} entrypoint of the gametest mod.
  */
 public final class ConfigSyncClientGameTest implements FabricClientGameTest {
     @Override
@@ -30,6 +30,8 @@ public final class ConfigSyncClientGameTest implements FabricClientGameTest {
                 TestDedicatedServerConnection connection = server.connect()) {
             context.waitFor(client -> received.synced());
             check(8, context.computeOnClient(client -> received.get(NetworkTestMod.RANGE)), "range received at join");
+            ServerConfig serverOnly = NetworkTestMod.SERVER_NETWORK.serverConfig();
+            check(4, server.computeOnServer(s -> serverOnly.get(NetworkTestMod.SERVER_RANGE)), "range of a server-only mod");
             NameAndId player = server.computeOnServer(s -> connection.getServerPlayer().nameAndId());
 
             server.runOnServer(s -> s.getPlayerList().deop(player));
@@ -52,9 +54,9 @@ public final class ConfigSyncClientGameTest implements FabricClientGameTest {
     /** Asks the server, from the client, to set the range to {@code range}. */
     private static void request(ClientGameTestContext context, ReceivedConfig received, int range) {
         boolean sent = context.computeOnClient(client -> {
-            ConfigValues edited = received.edit();
-            edited.set(NetworkTestMod.RANGE, range);
-            return received.request(edited);
+            ReceivedConfig.Edit edit = received.edit();
+            edit.values().set(NetworkTestMod.RANGE, range);
+            return received.request(edit);
         });
         check(true, sent, "change sent");
     }

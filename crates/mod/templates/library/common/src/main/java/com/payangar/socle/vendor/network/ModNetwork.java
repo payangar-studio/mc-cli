@@ -15,7 +15,9 @@ import com.payangar.socle.vendor.config.ModSide;
  * // on the client.
  * }</pre>
  *
- * A mod on one side only has no network: the other side does not have it.
+ * A mod on one side only has no network: the other side does not have it. A server-only mod
+ * registers it all the same, from its {@code ModInitializer} or its constructor, so that its server
+ * settings are loaded with each world.
  */
 public final class ModNetwork {
     private final ConfigSchema schema;
@@ -36,6 +38,11 @@ public final class ModNetwork {
 
     public ModSide side() {
         return schema.side();
+    }
+
+    /** Whether the mod has server settings, loaded from the world when a server starts. */
+    public boolean hasServerSettings() {
+        return schema.side().allowsServerScope();
     }
 
     /** Whether the mod has a network: it runs on both sides. */

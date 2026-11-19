@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonParser;
 import com.payangar.socle.vendor.config.ConfigSchema;
-import com.payangar.socle.vendor.config.ConfigValues;
 import com.payangar.socle.vendor.config.ModSide;
 import com.payangar.socle.vendor.config.Scope;
 import com.payangar.socle.vendor.config.Setting;
@@ -19,6 +18,7 @@ class ReceivedConfigTest {
     private final ConfigSchema.Builder config = ConfigSchema.builder("demo", ModSide.BOTH_OPTIONAL);
     private final Setting<Integer> range = config.define(Setting.integer("range", Scope.SERVER, 8, 1, 64));
     private final Setting<Boolean> pvp = config.define(Setting.bool("pvp", Scope.SERVER, false));
+    private final Setting<String> motd = config.define(Setting.string("motd", Scope.SERVER, ""));
     private final ModNetwork network = new ModNetwork(config.build());
     private final ReceivedConfig received = network.receivedConfig();
     private final List<CustomPacketPayload> sent = new ArrayList<>();
@@ -61,10 +61,10 @@ class ReceivedConfigTest {
     @Test
     void aRequestSendsOnlyWhatChanged() {
         received.receive(network.payloads().sync("{\"range\": 16, \"pvp\": false}"));
-        ConfigValues edited = received.edit();
-        edited.set(pvp, true);
+        ReceivedConfig.Edit edit = received.edit();
+        edit.values().set(pvp, true);
 
-        assertTrue(received.request(edited));
+        assertTrue(received.request(edit));
 
         assertEquals(1, sent.size());
         ConfigPayloads.Change change = (ConfigPayloads.Change) sent.get(0);
@@ -84,10 +84,10 @@ class ReceivedConfigTest {
 
     @Test
     void nothingIsSentBeforeTheServerSentItsSettings() {
-        ConfigValues edited = received.edit();
-        edited.set(range, 32);
+        ReceivedConfig.Edit edit = received.edit();
+        edit.values().set(range, 32);
 
-        assertFalse(received.request(edited));
+        assertFalse(received.request(edit));
         assertEquals(List.of(), sent);
     }
 
@@ -95,10 +95,46 @@ class ReceivedConfigTest {
     void nothingIsSentToAServerWithoutTheMod() {
         received.receive(network.payloads().sync("{\"range\": 16}"));
         serverListens = false;
-        ConfigValues edited = received.edit();
-        edited.set(range, 32);
+        ReceivedConfig.Edit edit = received.edit();
+        edit.values().set(range, 32);
 
-        assertFalse(received.request(edited));
+        assertFalse(received.request(edit));
+        assertEquals(List.of(), sent);
+    }
+
+    @Test
+    void aRequestKeepsWhatAnotherChangeMovedSinceTheEditBegan() {
+        received.receive(network.payloads().sync("{\"range\": 8, \"pvp\": false}"));
+        ReceivedConfig.Edit edit = received.edit();
+        // Another operator turns pvp on while this one edits the range.
+        received.receive(network.payloads().sync("{\"range\": 8, \"pvp\": true}"));
+        edit.values().set(range, 16);
+
+        assertTrue(received.request(edit));
+
+        ConfigPayloads.Change change = (ConfigPayloads.Change) sent.get(0);
+        assertEquals(JsonParser.parseString("{\"range\": 16}"), JsonParser.parseString(change.changes()));
+    }
+
+    @Test
+    void anEditBegunOnAnEarlierConnectionIsNotSent() {
+        received.receive(network.payloads().sync("{\"range\": 8}"));
+        ReceivedConfig.Edit edit = received.edit();
+        received.reset();
+        received.receive(network.payloads().sync("{\"range\": 8}"));
+        edit.values().set(range, 16);
+
+        assertFalse(received.request(edit));
+        assertEquals(List.of(), sent);
+    }
+
+    @Test
+    void aChangeTooLongForItsPayloadIsNotSent() {
+        received.receive(network.payloads().sync("{\"range\": 8}"));
+        ReceivedConfig.Edit edit = received.edit();
+        edit.values().set(motd, "x".repeat(ConfigPayloads.MAX_CHANGE));
+
+        assertFalse(received.request(edit));
         assertEquals(List.of(), sent);
     }
 }

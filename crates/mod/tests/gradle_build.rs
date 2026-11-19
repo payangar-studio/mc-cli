@@ -309,10 +309,12 @@ fn copy_library(root: &Path, shared: &str) {
     for entry in walk(&templates) {
         let relative = entry.strip_prefix(&templates).unwrap();
         let target = library_path(relative, shared, &package);
-        // The library of a loader the mod does not have.
-        if !root.join(target.iter().next().unwrap()).is_dir() {
+        let subproject = root.join(target.iter().next().unwrap());
+        // The library of a loader the mod does not have; `shared` is always there.
+        if !relative.starts_with("common") && !subproject.is_dir() {
             continue;
         }
+        assert!(subproject.is_dir(), "{} is missing", subproject.display());
         let target = root.join(target);
         let text = fs::read_to_string(&entry).unwrap();
         fs::create_dir_all(target.parent().unwrap()).unwrap();
@@ -321,10 +323,11 @@ fn copy_library(root: &Path, shared: &str) {
     }
     assert!(copied > 0, "no library file in {}", templates.display());
 
-    let gametest_mod = root.join("fabric/src/gametest/resources/fabric.mod.json");
-    if gametest_mod.is_file() {
-        let mut json: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(&gametest_mod).unwrap()).unwrap();
+    if root.join("fabric").is_dir() {
+        let gametest_mod = root.join("fabric/src/gametest/resources/fabric.mod.json");
+        let text = fs::read_to_string(&gametest_mod)
+            .unwrap_or_else(|e| panic!("{}: {e}", gametest_mod.display()));
+        let mut json: serde_json::Value = serde_json::from_str(&text).unwrap();
         let entrypoints = json["entrypoints"].as_object_mut().unwrap();
         for (kind, class) in LIBRARY_GAMETEST_ENTRYPOINTS {
             let list = entrypoints
@@ -389,6 +392,24 @@ fn assert_library_tests_passed(root: &Path, subproject: &str, classes: &[&str]) 
     }
 }
 
+/// A line the library's client gametest logs on the dedicated server once an
+/// operator's change is applied, which only that gametest makes.
+const LIBRARY_GAMETEST_MARK: &str =
+    "changed server settings of vendor_network_test: {\"range\":16}";
+
+/// The library's client gametest ran in `:fabric:runClientGameTest`, up to
+/// the operator's change: the socle's own client gametest passes that run as
+/// well, so a green build does not show the library's ran.
+fn assert_library_gametest_ran(root: &Path) {
+    let log = root.join("fabric/build/run/clientGameTest/logs/latest.log");
+    let text = fs::read_to_string(&log).unwrap_or_else(|e| panic!("{}: {e}", log.display()));
+    assert!(
+        text.contains(LIBRARY_GAMETEST_MARK),
+        "the library's client gametest did not run: `{LIBRARY_GAMETEST_MARK}` missing from {}",
+        log.display()
+    );
+}
+
 /// The library tests that need no loader, in `common/` of the templates.
 const COMMON_LIBRARY_TESTS: &[&str] = &[
     "config.ConfigSchemaTest",
@@ -414,6 +435,7 @@ fn library_tests_pass_in_a_generated_mod() {
     assert!(jar(&root, "neoforge").is_file());
     assert_library_tests_passed(&root, "common", COMMON_LIBRARY_TESTS);
     assert_library_tests_passed(&root, "neoforge", &["network.ServerConfigTest"]);
+    assert_library_gametest_ran(&root);
 }
 
 /// A single-loader mod has no `common/`: the library goes into the loader's

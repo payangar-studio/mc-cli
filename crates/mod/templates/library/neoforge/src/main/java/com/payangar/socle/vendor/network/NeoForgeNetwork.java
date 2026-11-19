@@ -26,11 +26,15 @@ public final class NeoForgeNetwork {
 
     /** Registers {@code network}, from the mod's constructor, with its event bus {@code modBus}. */
     public static void register(ModNetwork network, IEventBus modBus) {
+        ServerConfig config = network.serverConfig();
+        if (network.hasServerSettings()) {
+            NeoForge.EVENT_BUS.addListener(ServerAboutToStartEvent.class, event -> config.start(event.getServer()));
+            NeoForge.EVENT_BUS.addListener(ServerStoppedEvent.class, event -> config.stop());
+        }
         if (!network.enabled()) {
             return;
         }
         ConfigPayloads payloads = network.payloads();
-        ServerConfig config = network.serverConfig();
         modBus.addListener(RegisterPayloadHandlersEvent.class, event -> {
             PayloadRegistrar registrar = event.registrar(VERSION).optional();
             registrar.configurationToClient(payloads.presenceType(), payloads.presenceCodec());
@@ -48,11 +52,9 @@ public final class NeoForgeNetwork {
             }
         });
 
-        NeoForge.EVENT_BUS.addListener(ServerAboutToStartEvent.class, event -> config.start(event.getServer()));
-        NeoForge.EVENT_BUS.addListener(ServerStoppedEvent.class, event -> config.stop());
         NeoForge.EVENT_BUS.addListener(PlayerEvent.PlayerLoggedInEvent.class, event -> {
             if (event.getEntity() instanceof ServerPlayer player && player.connection.hasChannel(payloads.syncType())) {
-                PacketDistributor.sendToPlayer(player, config.sync());
+                config.sync().ifPresent(sync -> PacketDistributor.sendToPlayer(player, sync));
             }
         });
     }

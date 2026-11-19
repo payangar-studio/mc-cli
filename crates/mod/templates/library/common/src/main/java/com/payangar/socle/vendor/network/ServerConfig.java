@@ -1,6 +1,7 @@
 package com.payangar.socle.vendor.network;
 
 import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import com.payangar.socle.vendor.config.ConfigFile;
@@ -13,6 +14,8 @@ import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.PermissionSet;
@@ -33,6 +36,8 @@ public final class ServerConfig {
     private final Logger logger;
     private volatile ConfigValues values;
     private volatile Path file;
+    /** The players whose change was refused for lack of permission, logged once each per server run. */
+    private final Set<String> refused = ConcurrentHashMap.newKeySet();
 
     ServerConfig(ConfigSchema schema, ConfigPayloads payloads) {
         this.schema = schema;
@@ -72,6 +77,7 @@ public final class ServerConfig {
     public void stop() {
         values = null;
         file = null;
+        refused.clear();
     }
 
     /**
@@ -83,15 +89,25 @@ public final class ServerConfig {
         return running().get(setting);
     }
 
-    /** The settings to send to a player. */
-    public ConfigPayloads.Sync sync() {
-        return payloads.sync(running().settingsJson().toString());
+    /**
+     * The settings to send to a player; empty, and logged, when they are too long for their payload
+     * (a long text written by hand in the world's file).
+     */
+    public Optional<ConfigPayloads.Sync> sync() {
+        String json = running().settingsJson().toString();
+        if (json.length() > ConfigPayloads.MAX_SYNC) {
+            logger.error("The server settings of {} are not sent to players: {} characters, more than the {} they"
+                    + " may hold. Shorten their texts in {}.", schema.modId(), json.length(), ConfigPayloads.MAX_SYNC,
+                    file);
+            return Optional.empty();
+        }
+        return Optional.of(payloads.sync(json));
     }
 
     /**
-     * Applies the change {@code player} asks for, when they may change server settings and every
-     * value of the change is valid: a change is applied whole or not at all. The settings are then
-     * saved to the world's file.
+     * Applies the change {@code player} asks for, when they may change server settings, every value
+     * of the change is valid, and the settings stay short enough to be sent: a change is applied
+     * whole or not at all. The settings are then saved to the world's file.
      *
      * @return the settings to send to every player, empty when the change is refused
      */
@@ -102,17 +118,32 @@ public final class ServerConfig {
     /** {@link #change(ServerPlayer, ConfigPayloads.Change)} from the player named {@code name}. */
     Optional<ConfigPayloads.Sync> change(String name, PermissionSet permissions, ConfigPayloads.Change change) {
         if (!canEdit(permissions)) {
-            logger.warn("{} tried to change server settings of {} without the permission of an operator", name,
-                    schema.modId());
+            // Once per player: a modified client could send a change every tick.
+            if (refused.add(name)) {
+                logger.warn("{} tried to change server settings of {} without the permission of an operator", name,
+                        schema.modId());
+            }
             return Optional.empty();
         }
         ConfigValues changed = running().copy();
+        JsonObject asked = new JsonObject();
         List<String> problems;
         try {
             JsonElement json = JsonParser.parseString(change.changes());
-            problems = json.isJsonObject() ? changed.read(json.getAsJsonObject()) : List.of("not a JSON object");
+            if (json.isJsonObject()) {
+                asked = json.getAsJsonObject();
+                problems = changed.read(asked);
+            } else {
+                problems = List.of("not a JSON object");
+            }
         } catch (JsonParseException e) {
             problems = List.of("not a JSON object (" + e.getMessage() + ")");
+        }
+        JsonObject settings = changed.settingsJson();
+        int length = settings.toString().length();
+        if (problems.isEmpty() && length > ConfigPayloads.MAX_SYNC) {
+            problems = List.of("the settings would be " + length + " characters long, more than the "
+                    + ConfigPayloads.MAX_SYNC + " sent to players may hold");
         }
         if (!problems.isEmpty()) {
             logger.warn("Refused the change of server settings of {} from {}: {}", schema.modId(), name,
@@ -126,8 +157,12 @@ public final class ServerConfig {
             logger.error("The server settings of {} changed by {} apply until the server stops, but were not"
                     + " saved: {}", schema.modId(), name, e.getMessage());
         }
-        logger.info("{} changed server settings of {}: {}", name, schema.modId(), change.changes());
-        return Optional.of(sync());
+        JsonObject applied = new JsonObject();
+        for (String key : asked.keySet()) {
+            applied.add(key, settings.get(key));
+        }
+        logger.info("{} changed server settings of {}: {}", name, schema.modId(), applied);
+        return sync();
     }
 
     private ConfigValues running() {

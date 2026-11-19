@@ -19,17 +19,18 @@ public final class FabricNetwork {
 
     /** Registers {@code network}, from the mod's {@code ModInitializer}. */
     public static void register(ModNetwork network) {
+        ServerConfig config = network.serverConfig();
+        if (network.hasServerSettings()) {
+            ServerLifecycleEvents.SERVER_STARTING.register(config::start);
+            ServerLifecycleEvents.SERVER_STOPPED.register(server -> config.stop());
+        }
         if (!network.enabled()) {
             return;
         }
         ConfigPayloads payloads = network.payloads();
-        ServerConfig config = network.serverConfig();
         PayloadTypeRegistry.clientboundConfiguration().register(payloads.presenceType(), payloads.presenceCodec());
         PayloadTypeRegistry.clientboundPlay().register(payloads.syncType(), payloads.syncCodec());
         PayloadTypeRegistry.serverboundPlay().register(payloads.changeType(), payloads.changeCodec());
-
-        ServerLifecycleEvents.SERVER_STARTING.register(config::start);
-        ServerLifecycleEvents.SERVER_STOPPED.register(server -> config.stop());
 
         ServerConfigurationConnectionEvents.CONFIGURE.register((handler, server) -> {
             boolean hasMod = ServerConfigurationNetworking.canSend(handler, payloads.presenceType());
@@ -39,7 +40,7 @@ public final class FabricNetwork {
         });
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
             if (ServerPlayNetworking.canSend(handler, payloads.syncType())) {
-                sender.sendPacket(config.sync());
+                config.sync().ifPresent(sender::sendPacket);
             }
         });
         ServerPlayNetworking.registerGlobalReceiver(payloads.changeType(), (change, context) -> config

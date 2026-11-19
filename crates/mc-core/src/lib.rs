@@ -15,6 +15,7 @@ pub mod machine_config;
 pub mod model;
 pub mod page;
 pub mod platform;
+pub mod project;
 pub mod prompt;
 pub mod resolve;
 pub mod secrets;

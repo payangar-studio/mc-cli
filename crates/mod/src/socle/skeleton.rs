@@ -19,7 +19,7 @@
 //!   `src/gametest`, a test mod `<id>_gametest` whose Fabric client gametest
 //!   compares a render with `templates/example_world.png`, taken in CI.
 
-use crate::model::mod_toml::{Loader, ModToml};
+use crate::model::mod_toml::{Loader, ModToml, Side};
 
 /// A file of the skeleton: path relative to the repository root with `/`
 /// separators, and its content.
@@ -37,6 +37,10 @@ pub fn files(module: &ModToml) -> Vec<File> {
         ("name", module.name.clone()),
         ("name_toml", toml_escape(&module.name)),
         ("license_toml", toml_escape(&module.license)),
+        (
+            "mod_side",
+            module.side.as_str().replace('-', "_").to_uppercase(),
+        ),
     ];
     let fill = |template: &str| fill(template, &values);
     let package = module.package.replace('.', "/");
@@ -48,6 +52,13 @@ pub fn files(module: &ModToml) -> Vec<File> {
     };
     let has = |loader| module.loaders.contains(&loader);
     let client = module.side.has_client();
+    // The shared library's network: registered by every mod but a client-only
+    // one, which has no server to talk to; on the client too when the mod is
+    // on both sides.
+    let network = module.side != Side::Client;
+    let client_network = network && client;
+    let pick =
+        |plain: &'static str, wired: &'static str, wire: bool| if wire { wired } else { plain };
     // The source set of the shared client code: Loom's `client`, or `main`.
     let client_set = if shared == Loader::Neoforge.as_str() {
         "main"
@@ -86,7 +97,11 @@ pub fn files(module: &ModToml) -> Vec<File> {
     }
     add(
         format!("{shared}/src/main/java/{package}/CommonEntrypoint.java"),
-        include_str!("../../templates/skeleton/CommonEntrypoint.java"),
+        pick(
+            include_str!("../../templates/skeleton/CommonEntrypoint.java"),
+            include_str!("../../templates/skeleton/CommonEntrypointNetwork.java"),
+            network,
+        ),
     );
     add(
         format!("{shared}/src/test/java/{package}/GameBootstrap.java"),
@@ -109,14 +124,22 @@ pub fn files(module: &ModToml) -> Vec<File> {
         );
         add(
             format!("fabric/src/main/java/{package}/fabric/FabricEntrypoint.java"),
-            include_str!("../../templates/skeleton/FabricEntrypoint.java"),
+            pick(
+                include_str!("../../templates/skeleton/FabricEntrypoint.java"),
+                include_str!("../../templates/skeleton/FabricEntrypointNetwork.java"),
+                network,
+            ),
         );
         if client {
             add(
                 format!(
                     "fabric/src/client/java/{package}/fabric/client/FabricClientEntrypoint.java"
                 ),
-                include_str!("../../templates/skeleton/FabricClientEntrypoint.java"),
+                pick(
+                    include_str!("../../templates/skeleton/FabricClientEntrypoint.java"),
+                    include_str!("../../templates/skeleton/FabricClientEntrypointNetwork.java"),
+                    client_network,
+                ),
             );
         }
         add(
@@ -143,14 +166,22 @@ pub fn files(module: &ModToml) -> Vec<File> {
         );
         add(
             format!("neoforge/src/main/java/{package}/neoforge/NeoForgeEntrypoint.java"),
-            include_str!("../../templates/skeleton/NeoForgeEntrypoint.java"),
+            pick(
+                include_str!("../../templates/skeleton/NeoForgeEntrypoint.java"),
+                include_str!("../../templates/skeleton/NeoForgeEntrypointNetwork.java"),
+                network,
+            ),
         );
         if client {
             add(
                 format!(
                     "neoforge/src/main/java/{package}/neoforge/client/NeoForgeClientEntrypoint.java"
                 ),
-                include_str!("../../templates/skeleton/NeoForgeClientEntrypoint.java"),
+                pick(
+                    include_str!("../../templates/skeleton/NeoForgeClientEntrypoint.java"),
+                    include_str!("../../templates/skeleton/NeoForgeClientEntrypointNetwork.java"),
+                    client_network,
+                ),
             );
         }
         add(
@@ -223,7 +254,6 @@ fn toml_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::mod_toml::Side;
 
     fn module(loaders: &[Loader], side: Side) -> ModToml {
         ModToml {
@@ -333,6 +363,55 @@ mod tests {
         let page: toml::Table = toml::from_str(text("page/page.toml")).unwrap();
         assert_eq!(page["name"].as_str(), Some("Swift \"Blades\""));
         assert_eq!(page["modrinth"]["license"].as_str(), Some("MIT"));
+    }
+
+    #[test]
+    fn the_network_is_registered_by_every_side_that_has_one() {
+        let text = |side: Side, suffix: &str| {
+            let files = files(&module(&[Loader::Fabric, Loader::Neoforge], side));
+            files
+                .into_iter()
+                .find(|f| f.path.ends_with(suffix))
+                .map(|f| String::from_utf8(f.contents).unwrap())
+        };
+        let common = text(Side::BothOptional, "/CommonEntrypoint.java").unwrap();
+        assert!(common.contains("ModSide.BOTH_OPTIONAL"), "{common}");
+        assert!(common.contains("import com.payangar.swiftblades.vendor.network.ModNetwork;"));
+        for side in [Side::Server, Side::BothRequired, Side::BothOptional] {
+            for (file, call) in [
+                ("/FabricEntrypoint.java", "FabricNetwork.register("),
+                ("/NeoForgeEntrypoint.java", "NeoForgeNetwork.register("),
+            ] {
+                assert!(text(side, file).unwrap().contains(call), "{side} {file}");
+            }
+        }
+        for side in [Side::BothRequired, Side::BothOptional] {
+            for (file, call) in [
+                (
+                    "/FabricClientEntrypoint.java",
+                    "FabricNetworkClient.register(",
+                ),
+                (
+                    "/NeoForgeClientEntrypoint.java",
+                    "NeoForgeNetworkClient.register(",
+                ),
+            ] {
+                assert!(text(side, file).unwrap().contains(call), "{side} {file}");
+            }
+        }
+        // A client-only mod has no network.
+        for file in [
+            "/CommonEntrypoint.java",
+            "/FabricEntrypoint.java",
+            "/FabricClientEntrypoint.java",
+            "/NeoForgeEntrypoint.java",
+            "/NeoForgeClientEntrypoint.java",
+        ] {
+            assert!(
+                !text(Side::Client, file).unwrap().contains("Network"),
+                "{file}"
+            );
+        }
     }
 
     #[test]

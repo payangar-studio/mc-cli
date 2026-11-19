@@ -54,17 +54,25 @@ jobs:
           ./actionlint -color .github/workflows/*.yml crates/*/templates/socle/.github/workflows/*.yml
 
   # Builds projects made by `mod init` with Gradle: both loaders, each alone,
-  # the loader metadata for each side, the client split of `common`.
+  # the loader metadata for each side, the client split of `common`, and the
+  # shared library with its tests, client gametests included: same packages
+  # and environment as the mod-tests job.
   mod-build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The game servers of the generated mods' checks could hang.
     timeout-minutes: 45
+    env:
+      SDL_OPENGL_FORCE_SRGB_FRAMEBUFFER: skip
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: temurin
           java-version: "25"
+      - name: Install the virtual display and the software renderers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb mesa-vulkan-drivers
       - name: Install the stable Rust toolchain
         run: |
           rustup toolchain install stable --profile minimal --no-self-update

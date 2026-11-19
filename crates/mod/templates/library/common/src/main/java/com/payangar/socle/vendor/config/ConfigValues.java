@@ -2,7 +2,9 @@ package com.payangar.socle.vendor.config;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -68,6 +70,52 @@ public final class ConfigValues {
         return json;
     }
 
+    /**
+     * The values of every setting of the scope in declaration order, without the unknown keys of
+     * the file: what the server sends to its players.
+     */
+    public JsonObject settingsJson() {
+        JsonObject json = new JsonObject();
+        for (Setting<?> setting : values.keySet()) {
+            json.add(setting.name(), write(setting));
+        }
+        return json;
+    }
+
+    /**
+     * Sets each setting {@code json} names to its value there, brought within its bounds. A key no
+     * setting of the scope declares, and a value that is not one of its setting's type, are left
+     * out.
+     *
+     * @return what was wrong with {@code json}, empty when every value was read as it is
+     */
+    public List<String> read(JsonObject json) {
+        List<String> problems = new ArrayList<>();
+        for (Map.Entry<String, JsonElement> entry : json.entrySet()) {
+            Setting<?> setting = values.keySet().stream()
+                    .filter(s -> s.name().equals(entry.getKey()))
+                    .findFirst()
+                    .orElse(null);
+            if (setting == null) {
+                problems.add("`" + entry.getKey() + "` is not a " + scope + " setting of " + schema.modId());
+            } else {
+                read(setting, entry.getValue(), problems);
+            }
+        }
+        return problems;
+    }
+
+    /** A copy, unknown keys included, that changes independently of these values. */
+    public ConfigValues copy() {
+        ConfigValues copy = new ConfigValues(schema, scope);
+        copy.values.putAll(values);
+        for (Map.Entry<String, JsonElement> entry : unknown.entrySet()) {
+            copy.keepUnknown(entry.getKey(), entry.getValue());
+        }
+        copy.fromBrokenFile = fromBrokenFile;
+        return copy;
+    }
+
     void markFromBrokenFile() {
         fromBrokenFile = true;
     }
@@ -75,6 +123,18 @@ public final class ConfigValues {
     /** Keeps a key of the file that no setting of the scope declares. */
     void keepUnknown(String key, JsonElement value) {
         unknown.add(key, value.deepCopy());
+    }
+
+    private <T> void read(Setting<T> setting, JsonElement json, List<String> problems) {
+        SettingType.Reading<T> reading = setting.type().read(json);
+        if (reading.value() == null) {
+            problems.add("`" + setting.name() + "`: " + reading.problem());
+            return;
+        }
+        set(setting, reading.value());
+        if (reading.problem() != null) {
+            problems.add("`" + setting.name() + "`: " + reading.problem());
+        }
     }
 
     private <T> JsonElement write(Setting<T> setting) {

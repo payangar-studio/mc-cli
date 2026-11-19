@@ -44,25 +44,28 @@ extensions.configure<LoomGradleExtensionAPI> {
     }
 }
 
-repositories {
-    maven("https://maven.terraformersmc.com/releases/") {
-        content { includeGroup("com.terraformersmc") }
-    }
-}
-
 dependencies {
     "minecraft"("com.mojang:minecraft:${pinned.minecraft}")
     "implementation"("net.fabricmc:fabric-loader:${pinned.fabricLoader}")
     if (mod.dependenciesOf("fabric").any { it.id == "fabric-api" }) {
         "implementation"("net.fabricmc.fabric-api:fabric-api:${pinned.fabricApi}")
     }
-    // The shared library opens its config screen from Mod Menu when the
-    // player has it; the mod does not depend on it.
-    "clientCompileOnly"("com.terraformersmc:modmenu:${pinned.modmenu}")
 }
 
-// Mod Menu's entrypoint is declared once the shared library's class is there.
+// The shared library opens its config screen from Mod Menu when the player
+// has it; the mod does not depend on it. Mod Menu is compiled against, and its
+// entrypoint declared, once the library's class is there.
 val modMenuEntrypoint = file("src/client/java/${mod.pkg.replace('.', '/')}/vendor/fabric/ModMenuEntrypoint.java")
+if (modMenuEntrypoint.isFile) {
+    repositories {
+        maven("https://maven.terraformersmc.com/releases/") {
+            content { includeGroup("com.terraformersmc") }
+        }
+    }
+    dependencies {
+        "clientCompileOnly"("com.terraformersmc:modmenu:${pinned.modmenu}")
+    }
+}
 
 if (hasCommon) {
     val mainClasses = fromCommon("commonMainClasses")

@@ -162,10 +162,13 @@ jobs:
           path: ${{ runner.temp }}/mod-sides/
           if-no-files-found: ignore
 
-  # `mod run --server` on a project made by `mod init`: the client, on a
-  # virtual display with software rendering, joins the dev server.
+  # `mod run` on a project made by `mod init`: with `--server`, the client,
+  # on a virtual display with software rendering, joins the dev server; a CI
+  # profile with Sodium passes the steps of the mod workflow's `profile` job.
   mod-run:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    # The game servers and clients it starts could hang.
+    timeout-minutes: 60
     env:
       # Keeps SDL on OpenGL with Mesa's software renderer.
       SDL_OPENGL_FORCE_SRGB_FRAMEBUFFER: skip
@@ -184,4 +187,4 @@ jobs:
           rustup toolchain install stable --profile minimal --no-self-update
           rustup default stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo test -p mc-mod --locked --test mod_run -- --ignored --nocapture
+      - run: cargo test -p mc-mod --locked --test mod_run -- --ignored --nocapture --test-threads=1

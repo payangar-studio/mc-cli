@@ -1,7 +1,9 @@
 //! `mod run`: the mod in the game, alone or with extra mods and resource
 //! packs from Modrinth: once (`--with`, `--pack`, in `runs/.one-shot/`,
 //! emptied first) or through a test profile (`--profile`, in `runs/<name>/`).
-//! `--server` adds a dedicated dev server the client joins.
+//! `--server` adds a dedicated dev server the client joins. `--prepare-only`
+//! fills the run directory without starting the game: the mod's CI does it
+//! for a CI profile before its gametests.
 
 use mc_core::error::Context as _;
 
@@ -30,6 +32,9 @@ pub struct Args {
     /// Also start a dedicated dev server (offline, RCON on) and join it
     #[arg(long)]
     pub server: bool,
+    /// Download the mods and resource packs and write the options, without starting the game
+    #[arg(long)]
+    pub prepare_only: bool,
 }
 
 pub fn run(args: Args, ctx: &Context) -> Result<()> {
@@ -67,16 +72,17 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
         options: profile.options_lines()?,
         server: args.server,
     };
-    run::run(
-        root,
-        &plan,
-        &run::pack(&socle.init, loader),
-        &run::builtin(),
-    )
+    let pack = run::pack(&socle.init, loader);
+    if args.prepare_only {
+        run::prepare(&plan, &pack, &run::builtin())?;
+        println!("Run directory: {}", plan.dir.display());
+        return Ok(());
+    }
+    run::run(root, &plan, &pack, &run::builtin())
 }
 
-/// The loader to run: `--loader`, the profile's, else the mod's first one;
-/// always one of the mod's.
+/// The loader to run: `--loader`, the profile's, else Fabric for a CI profile
+/// and the mod's first loader otherwise; always one of the mod's.
 fn loader(args: &Args, profile: &TestProfile, module: &ModToml) -> Result<Loader> {
     let names = || {
         module
@@ -93,7 +99,11 @@ fn loader(args: &Args, profile: &TestProfile, module: &ModToml) -> Result<Loader
                 format!("use one of the mod's loaders: {}", names()),
             )
         })?,
-        None => profile.loader.unwrap_or(module.loaders[0]),
+        None => profile.loader.unwrap_or(if profile.ci {
+            Loader::Fabric
+        } else {
+            module.loaders[0]
+        }),
     };
     if !module.loaders.contains(&loader) {
         return Err(Error::usage(
@@ -102,4 +112,57 @@ fn loader(args: &Args, profile: &TestProfile, module: &ModToml) -> Result<Loader
         ));
     }
     Ok(loader)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::mod_toml::Side;
+
+    fn module(loaders: Vec<Loader>) -> ModToml {
+        ModToml {
+            id: "swift_blades".into(),
+            name: "Swift Blades".into(),
+            package: "com.payangar.swiftblades".into(),
+            side: Side::BothRequired,
+            loaders,
+            license: "MIT".into(),
+            dependencies: Vec::new(),
+        }
+    }
+
+    fn args(loader: Option<&str>) -> Args {
+        Args {
+            profile: Some("p".into()),
+            with: Vec::new(),
+            pack: Vec::new(),
+            loader: loader.map(str::to_owned),
+            server: false,
+            prepare_only: false,
+        }
+    }
+
+    #[test]
+    fn a_ci_profile_runs_on_fabric_whatever_the_first_loader() {
+        let module = module(vec![Loader::Neoforge, Loader::Fabric]);
+        let ci = TestProfile {
+            ci: true,
+            ..TestProfile::default()
+        };
+        assert_eq!(loader(&args(None), &ci, &module).unwrap(), Loader::Fabric);
+        assert_eq!(
+            loader(&args(None), &TestProfile::default(), &module).unwrap(),
+            Loader::Neoforge
+        );
+    }
+
+    #[test]
+    fn a_ci_profile_of_a_mod_without_fabric_is_refused() {
+        let ci = TestProfile {
+            ci: true,
+            ..TestProfile::default()
+        };
+        let err = loader(&args(None), &ci, &module(vec![Loader::Neoforge])).unwrap_err();
+        assert!(err.to_string().contains("not built for fabric"), "{err}");
+    }
 }

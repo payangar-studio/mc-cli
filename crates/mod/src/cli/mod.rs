@@ -10,9 +10,9 @@ use crate::error::Result;
 
 pub mod init;
 pub mod port;
+pub mod run;
 pub mod setup;
 pub mod test;
-pub mod run;
 pub mod update;
 
 /// CLI of the Minecraft mod socle.

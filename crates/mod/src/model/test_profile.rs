@@ -1,6 +1,8 @@
 //! `test-profiles/<name>.toml`: a named set of extra mods, resource packs and
 //! game options to run the mod with, versioned with the mod. `mod run
-//! --profile <name>` runs it in `runs/<name>/`, ignored by git.
+//! --profile <name>` runs it in `runs/<name>/`, ignored by git. A profile with
+//! `ci = true` also runs in the mod's CI, as Fabric gametests with its mods
+//! (`.github/workflows/mod-tests.yml`).
 
 use std::path::{Path, PathBuf};
 
@@ -16,9 +18,13 @@ pub const DIR: &str = "test-profiles";
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TestProfile {
-    /// The loader it runs on; the mod's first loader when absent.
+    /// The loader it runs on; when absent, Fabric for a CI profile, else the
+    /// mod's first loader.
     #[serde(default)]
     pub loader: Option<Loader>,
+    /// Whether the mod's CI runs the Fabric gametests with the profile's mods.
+    #[serde(default)]
+    pub ci: bool,
     /// Modrinth mods, as `<slug>` or `<slug>@<version>`.
     #[serde(default)]
     pub mods: Vec<String>,
@@ -52,8 +58,14 @@ impl TestProfile {
         let profile: Self = parse_toml(
             &read_file(&path)?,
             &format!("{DIR}/{name}.toml"),
-            "fix the file: `loader`, `mods`, `packs` and an `[options]` table are allowed",
+            "fix the file: `loader`, `ci`, `mods`, `packs` and an `[options]` table are allowed",
         )?;
+        if profile.ci && profile.loader.is_some_and(|l| l != Loader::Fabric) {
+            return Err(Error::usage(
+                format!("test profile `{name}` runs in CI on a loader other than Fabric"),
+                "a CI profile runs Fabric's gametests: set `loader = \"fabric\"`, or remove `ci = true`",
+            ));
+        }
         for wanted in profile.mods.iter().chain(&profile.packs) {
             Wanted::parse(wanted)?;
         }
@@ -195,6 +207,20 @@ mod tests {
     }
 
     #[test]
+    fn a_ci_profile_runs_on_fabric() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "sodium", "ci = true\nmods = [\"sodium\"]\n");
+        assert!(TestProfile::load(dir.path(), "sodium").unwrap().ci);
+        write(dir.path(), "fabric", "ci = true\nloader = \"fabric\"\n");
+        assert!(TestProfile::load(dir.path(), "fabric").unwrap().ci);
+
+        write(dir.path(), "neoforge", "ci = true\nloader = \"neoforge\"\n");
+        let err = TestProfile::load(dir.path(), "neoforge").unwrap_err();
+        assert!(err.to_string().contains("other than Fabric"), "{err}");
+        assert!(err.hint().contains("loader = \"fabric\""), "{}", err.hint());
+    }
+
+    #[test]
     fn an_empty_profile_is_valid() {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "plain", "");
@@ -223,6 +249,7 @@ mod tests {
         for (text, expected) in [
             ("mod = [\"x\"]\n", "is invalid"),
             ("loader = \"forge\"\n", "is invalid"),
+            ("ci = \"yes\"\n", "is invalid"),
             ("mods = [\"sodium@\"]\n", "is not a Modrinth project"),
             ("packs = [\"https://x/y\"]\n", "is not a Modrinth project"),
             ("[options]\nkeys = [1]\n", "option `keys`"),

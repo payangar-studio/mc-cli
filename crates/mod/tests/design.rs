@@ -274,6 +274,30 @@ fn the_check_refuses_a_page_that_loads_anything() {
             "<script type=\"module\">import { h } from \"https://esm.sh/preact\";</script>",
         ),
         ("claude runtime", "<script>window.claude.ask('x')</script>"),
+        (
+            "side-effect import",
+            "<script type=\"module\">import \"./app.js\";</script>",
+        ),
+        (
+            "re-export",
+            "<script type=\"module\">export { h } from 'https://esm.sh/preact';</script>",
+        ),
+        (
+            "srcset candidate after a data uri",
+            "<img alt=\"\" srcset=\"data:image/png;base64,iVBORw0KGgo= 1x, big.png 2x\">",
+        ),
+        (
+            "srcset candidate after a comma",
+            "<img alt=\"\" srcset=\"data:image/png;base64,iVBORw0KGgo= 1x,big.png 2x\">",
+        ),
+        ("body background", "<body background=\"tex.png\"></body>"),
+        ("cell background", "<table><tr><td background='tex.png'>"),
+        ("worker", "<script>new Worker(\"w.js\")</script>"),
+        ("shared worker", "<script>new SharedWorker('w.js')</script>"),
+        (
+            "service worker",
+            "<script>navigator.serviceWorker.register('sw.js')</script>",
+        ),
     ] {
         let (ok, output) = check(
             &root,
@@ -295,6 +319,9 @@ fn the_check_accepts_links_data_uris_and_fragments() {
 <a href="https://modrinth.com/mod/swift-blades">Modrinth</a>
 <img alt="Blade"
   src="data:image/png;base64,iVBORw0KGgo=">
+<img alt="Blade" srcset="data:image/png;base64,iVBORw0KGgo= 1x,
+  data:image/png;base64,iVBORw0KGgo= 2x">
+<table class="recipe"><tr><td>Iron</td></tr></table>
 <svg><use href="#blade"/></svg>
 <p>The blade can import (and export) items. data-src="x"</p>
 <script>document.querySelector('a').focus();</script>

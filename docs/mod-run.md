@@ -13,7 +13,7 @@ mod run --profile sodium --prepare-only     # fill runs/sodium/ without starting
 
 - **One-shot** (`--with`, `--pack`, repeatable): the run directory is `runs/.one-shot/`, emptied at the start of each one-shot run.
 - **Profile** (`--profile <name>`): the run directory is `runs/<name>/` and is kept between runs, so the world and the options the player changed stay. Its `mods/` and `resourcepacks/` follow the profile: files no longer listed are removed.
-- `<slug>@<version>` pins a version, by its Modrinth version number or id; without it, the latest release compatible with the branch's Minecraft and the loader is taken (a beta when there is no release). Required dependencies are not added: list them too.
+- `<slug>@<version>` pins a version, by its Modrinth version number or id; without it, the latest release compatible with the branch's Minecraft and the loader is taken (a beta when there is no release). A profile pins each of its mods, so that a commit always runs the same mods, in CI too. Required dependencies are not added: list them too.
 - The game directory is the run directory: `logs/latest.log`, `screenshots/`, `crash-reports/` are there.
 
 ## Test profiles
@@ -23,19 +23,19 @@ mod run --profile sodium --prepare-only     # fill runs/sodium/ without starting
 ```toml
 loader = "fabric"        # the loader it runs on; Fabric for a CI profile, else the mod's first loader, when absent
 ci = true                # also run in the mod's CI (see below)
-mods = ["sodium", "lithium@mc26.3-0.26.3-fabric"]
-packs = ["fresh-animations"]   # enabled in this order, the last one on top
+mods = ["sodium@mc26.3-0.9.2-fabric", "lithium@mc26.3-0.26.3-fabric"]   # pinned
+packs = ["fresh-animations"]   # enabled in this order, the last one on top; @<version> optional
 
 [options]                # written to options.txt as <key>:<value>
 renderDistance = 8
 lang = "fr_fr"
 ```
 
-The resource packs are enabled in `options.txt` (`resourcePacks`), after the packs the game itself lists. A value of `[options]` is written as it is: a string option the game stores quoted is written quoted (`soundDevice = '""'`).
+The resource packs are enabled in `options.txt` (`resourcePacks`), after the packs the game itself lists. A value of `[options]` is written as it is: a string option the game stores quoted is written quoted (`soundDevice = '""'`). Options select the `custom` graphics preset unless the profile sets `graphicsPreset` itself: the game applies any other preset over the graphics options, such as `renderDistance`. When `mod run` creates `options.txt`, the build adds the game's data version to it before the client starts; without it, the game would run its old options fixes on the file and reset some options. `mod run` also turns off the accessibility onboarding screen of a first launch (`onboardAccessibility:false`) unless the profile or the player set it: the game shows it before joining a server.
 
 ## Dev server
 
-`--server` starts the loader's dev server in `<run dir>/server/` and waits for its `Done`, then starts the client with `--quickPlayMultiplayer`. The server listens on this machine only (`server-ip=127.0.0.1`), in offline mode, without whitelist, on port 25565 (another free port when it is taken). RCON is on, port 25575 by default, with a password generated once and kept in `<run dir>/server/server.properties`. The server's Gradle output goes to `<run dir>/server/gradle.log`, its log to `<run dir>/server/logs/latest.log`. Closing the client stops the server. Mods Modrinth marks client-only stay out of the server, server-only ones out of the client.
+`--server` starts the loader's dev server in `<run dir>/server/` and waits for its `Done`, then starts the client with `--quickPlayMultiplayer`. The server listens on this machine only (`server-ip=127.0.0.1`), in offline mode, without whitelist, on port 25565 (another free port when it is taken). RCON is on, port 25575 by default, with a password generated once and kept in `<run dir>/server/server.properties`. The server's Gradle output goes to `<run dir>/server/gradle.log`, its log to `<run dir>/server/logs/latest.log`. Closing the client stops the server, through RCON (`stop`, which saves the world). Mods Modrinth marks client-only stay out of the server, server-only ones out of the client.
 
 ## CI profiles
 

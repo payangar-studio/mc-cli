@@ -188,7 +188,7 @@ fn prepare_downloads_each_side_its_mods_and_enables_the_packs() {
     );
     assert_eq!(
         fs::read_to_string(dir.path().join("options.txt")).unwrap(),
-        "renderDistance:8\nresourcePacks:[\"vanilla\",\"file/faithful-1.0.zip\"]\n"
+        "onboardAccessibility:false\nrenderDistance:8\nresourcePacks:[\"vanilla\",\"file/faithful-1.0.zip\"]\n"
     );
     // Sodium is client only: the server takes Lithium alone, linked from the
     // client's copy rather than downloaded again.
@@ -253,7 +253,7 @@ fn what_is_no_longer_asked_is_removed() {
     assert!(names(&dir.path().join("resourcepacks")).is_empty());
     assert_eq!(
         fs::read_to_string(dir.path().join("options.txt")).unwrap(),
-        "renderDistance:8\nresourcePacks:[\"vanilla\"]\n"
+        "onboardAccessibility:false\nrenderDistance:8\nresourcePacks:[\"vanilla\"]\n"
     );
 }
 
@@ -443,6 +443,101 @@ fn with_a_server_the_client_joins_it_and_the_server_is_stopped_after() {
     );
     assert!(server.join("mods/lithium-0.26.3.jar").is_file());
     assert_eq!(git_status(&root), "");
+}
+
+/// One RCON packet read from `stream`: its id, type and body.
+fn rcon_packet(stream: &mut std::net::TcpStream) -> (i32, i32, String) {
+    use std::io::Read;
+    let mut len = [0; 4];
+    stream.read_exact(&mut len).unwrap();
+    let mut rest = vec![0; i32::from_le_bytes(len) as usize];
+    stream.read_exact(&mut rest).unwrap();
+    let int = |i: usize| i32::from_le_bytes(rest[i..i + 4].try_into().unwrap());
+    let body = String::from_utf8(rest[8..rest.len() - 2].to_vec()).unwrap();
+    (int(0), int(4), body)
+}
+
+fn rcon_reply(stream: &mut std::net::TcpStream, id: i32, kind: i32) {
+    use std::io::Write;
+    let mut packet = 10i32.to_le_bytes().to_vec();
+    packet.extend(id.to_le_bytes());
+    packet.extend(kind.to_le_bytes());
+    packet.extend([0, 0]);
+    stream.write_all(&packet).unwrap();
+}
+
+fn alive(pid: &str) -> bool {
+    Command::new("kill")
+        .args(["-0", pid])
+        .status()
+        .unwrap()
+        .success()
+}
+
+/// The server's wrapper is not the server's process, as on Windows, where it
+/// is `cmd.exe` and the server outlives it: once the client exits, the server
+/// is stopped through RCON (`stop`, which also saves the world), not by
+/// killing the wrapper.
+#[test]
+fn when_the_client_exits_the_server_is_stopped_through_rcon() {
+    let api = Api::new();
+    let (_tmp, root) = repo();
+    common::write_executable(
+        &root.join("gradlew"),
+        r#"#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in -Pmod.runDir=*) dir="${arg#-Pmod.runDir=}" ;; esac
+done
+mkdir -p "$dir/logs"
+case "$1" in
+  *runServer)
+    sleep 60 &
+    echo $! > "$dir/server.pid"
+    echo '[12:00:00] [Server thread/INFO] (Minecraft) Done (1.0s)! For help, type "help"' > "$dir/logs/latest.log"
+    wait ;;
+esac
+"#,
+    );
+    let dir = root.join(RUNS).join("multi");
+    let plan = plan(&dir, &[], &[], true);
+    let ports = prepare(&plan, &pack(), &api.registry()).unwrap().unwrap();
+    let password = fs::read_to_string(dir.join("server/server.properties"))
+        .unwrap()
+        .lines()
+        .find_map(|l| l.strip_prefix("rcon.password=").map(str::to_owned))
+        .unwrap();
+
+    // The server's RCON: it stops the server on `stop`.
+    let listener = std::net::TcpListener::bind(("127.0.0.1", ports.rcon)).unwrap();
+    let pid_file = dir.join("server/server.pid");
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let (id, kind, body) = rcon_packet(&mut stream);
+        tx.send((kind, body)).unwrap();
+        rcon_reply(&mut stream, id, 2);
+        let (id, kind, body) = rcon_packet(&mut stream);
+        let pid = fs::read_to_string(&pid_file).unwrap();
+        Command::new("kill").arg(pid.trim()).status().unwrap();
+        rcon_reply(&mut stream, id, 0);
+        tx.send((kind, body)).unwrap();
+    });
+
+    launch(&root, &plan, Some(ports)).unwrap();
+
+    let pid = fs::read_to_string(dir.join("server/server.pid")).unwrap();
+    let pid = pid.trim();
+    let server_alive = alive(pid);
+    if server_alive {
+        Command::new("kill").arg(pid).status().unwrap();
+    }
+    let received: Vec<_> = rx.try_iter().collect();
+    assert!(!server_alive, "the server outlived the run");
+    assert_eq!(
+        received,
+        [(3, password), (2, "stop".to_owned())],
+        "RCON login, then `stop`"
+    );
 }
 
 #[test]

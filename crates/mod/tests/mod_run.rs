@@ -1,5 +1,5 @@
 //! `mod run` on a project made by `mod init`: with `--server`, the client
-//! joins the dev server; a CI profile runs the Fabric gametests with its mods,
+//! joins the dev server, and closing it stops the server; a CI profile runs the Fabric gametests with its mods,
 //! as the mod's workflow does. They download Gradle, Fabric, Minecraft and
 //! mods from Modrinth, and run the client on a virtual display (`xvfb-run`),
 //! so they are `#[ignore]`: CI runs them in their own job (`cargo test -p
@@ -70,12 +70,32 @@ fn init(profiles: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
     (tmp, root)
 }
 
+/// The `java` processes whose working directory is `dir`.
+fn java_in(dir: &Path) -> Vec<String> {
+    let dir = dir.canonicalize().unwrap();
+    fs::read_dir("/proc")
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let path = e.path();
+            fs::read_link(path.join("cwd")).is_ok_and(|cwd| cwd == dir)
+                && fs::read(path.join("cmdline"))
+                    .is_ok_and(|c| String::from_utf8_lossy(&c).contains("java"))
+        })
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect()
+}
+
+/// The profile's options survive the game's start: `preferredGraphicsBackend`
+/// is one the game resets in an options.txt without a data version. Closing
+/// the client then stops the server through RCON, and `mod run` with it.
 #[test]
 #[ignore = "downloads Gradle, Fabric, Minecraft and Lithium; needs Xvfb"]
 fn the_client_joins_the_dev_server() {
     let (tmp, root) = init(&[(
         "multi",
-        "mods = [\"lithium\"]\n\n[options]\nrenderDistance = 4\n",
+        "mods = [\"lithium@mc26.3-0.26.3-fabric\"]\n\n[options]\nrenderDistance = 4\n\
+         preferredGraphicsBackend = '\"opengl\"'\n",
     )]);
 
     let output = tmp.path().join("mod-run.log");
@@ -109,13 +129,31 @@ fn the_client_joins_the_dev_server() {
         }
         thread::sleep(Duration::from_secs(2));
     };
+    let multi = root.join("runs/multi");
+    // Closing the client: `mod run` stops the server and exits by itself.
+    let closed = joined.is_some() && {
+        let clients = java_in(&multi);
+        eprintln!("closing the client: {clients:?}");
+        for pid in &clients {
+            let _ = Process::new("kill").args(["-TERM", pid]).status();
+        }
+        let deadline = Instant::now() + Duration::from_secs(180);
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                break true;
+            }
+            if Instant::now() > deadline {
+                break false;
+            }
+            thread::sleep(Duration::from_secs(1));
+        }
+    };
     eprintln!(
-        "stopping mod run after {}s (joined: {})",
+        "stopping mod run after {}s (joined: {}, stopped with the client: {closed})",
         started.elapsed().as_secs(),
         joined.is_some()
     );
     stop(&mut child);
-    let multi = root.join("runs/multi");
     keep_logs(
         "server",
         &[
@@ -134,6 +172,18 @@ fn the_client_joins_the_dev_server() {
     );
     let joined = joined.expect("the client never joined the dev server");
     eprintln!("joined: {joined}");
+    assert!(closed, "mod run did not stop when the client closed");
+    assert!(
+        server_log.contains("RCON Client") && server_log.contains("Stopping server"),
+        "the server was not stopped through RCON"
+    );
+    let options = fs::read_to_string(multi.join("options.txt")).unwrap();
+    assert!(
+        options
+            .lines()
+            .any(|l| l == "preferredGraphicsBackend:\"opengl\""),
+        "the profile's option was reset:\n{options}"
+    );
     assert!(
         root.join("runs/multi/server/mods")
             .read_dir()
@@ -263,8 +313,11 @@ fn copy_dir(from: &Path, to: &Path) {
 #[ignore = "downloads Gradle, Fabric, Minecraft and Sodium; needs Xvfb"]
 fn a_ci_profile_runs_the_fabric_gametests_with_its_mods() {
     let (tmp, root) = init(&[
-        ("sodium", "ci = true\nmods = [\"sodium\"]\n"),
-        ("local", "mods = [\"lithium\"]\n"),
+        (
+            "sodium",
+            "ci = true\nmods = [\"sodium@mc26.3-0.9.2-fabric\"]\n",
+        ),
+        ("local", "mods = [\"lithium@mc26.3-0.26.3-fabric\"]\n"),
     ]);
     let text = fs::read_to_string(root.join(".github/workflows/mod-tests.yml")).unwrap();
     let workflow = &YamlLoader::load_from_str(&text).unwrap()[0];

@@ -15,7 +15,14 @@ use mc_core::model::write_file;
 use super::Ports;
 use crate::error::Result;
 
-/// Removes from `dir` the files of `kind` (by extension) not named in `keep`.
+/// The game option of the accessibility onboarding screen.
+const ONBOARDING: &str = "onboardAccessibility";
+
+/// Extension of a file being downloaded, renamed once checked.
+pub const PART: &str = "part";
+
+/// Removes from `dir` the files of `kind` (by extension) not named in `keep`,
+/// and the downloads an interrupted run left unfinished.
 pub fn keep_only(dir: &Path, kind: Kind, keep: &[&str]) -> Result<()> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Ok(());
@@ -25,7 +32,9 @@ pub fn keep_only(dir: &Path, kind: Kind, keep: &[&str]) -> Result<()> {
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        if path.is_file() && Kind::of_file_name(name) == Some(kind) && !keep.contains(&name) {
+        let unfinished = path.extension().is_some_and(|e| e == PART);
+        let unwanted = Kind::of_file_name(name) == Some(kind) && !keep.contains(&name);
+        if path.is_file() && (unfinished || unwanted) {
             fs::remove_file(&path).context(format!("removing {}", path.display()))?;
         }
     }
@@ -34,12 +43,17 @@ pub fn keep_only(dir: &Path, kind: Kind, keep: &[&str]) -> Result<()> {
 
 /// Writes the game options and the enabled resource packs into
 /// `<dir>/options.txt`. The resource packs from files (`file/<name>`) become
-/// `packs`, in order, after the packs the game lists (`vanilla`, the loader's);
-/// a missing file is created only when there is something to write.
+/// `packs`, in order, after the packs the game lists (`vanilla`, the loader's).
+/// The accessibility onboarding of a first launch is skipped unless the file
+/// or `options` say otherwise: the game shows it before Quick Play, so the
+/// client would wait there instead of joining the dev server.
 pub fn write_options(dir: &Path, packs: &[&str], options: &[(String, String)]) -> Result<()> {
     let path = dir.join("options.txt");
     let text = fs::read_to_string(&path).unwrap_or_default();
     let mut set: Vec<(String, String)> = options.to_vec();
+    if get(&text, ':', ONBOARDING).is_none() && !options.iter().any(|(k, _)| k == ONBOARDING) {
+        set.insert(0, (ONBOARDING.to_owned(), "false".to_owned()));
+    }
     let current = get(&text, ':', "resourcePacks");
     if current.is_some() || !packs.is_empty() {
         let mut list: Vec<String> = current
@@ -51,9 +65,6 @@ pub fn write_options(dir: &Path, packs: &[&str], options: &[(String, String)]) -
             "resourcePacks".into(),
             serde_json::to_string(&list).expect("strings serialize"),
         ));
-    }
-    if text.is_empty() && set.is_empty() {
-        return Ok(());
     }
     write_file(&path, &set_lines(&text, ':', &set))
 }
@@ -79,6 +90,12 @@ pub fn write_server_properties(dir: &Path, ports: Ports) -> Result<()> {
     .map(|(k, v)| (k.to_owned(), v));
     write_file(&path, &set_lines(&text, '=', &set))?;
     write_file(&dir.join("eula.txt"), "eula=true\n")
+}
+
+/// The RCON password of the server in `dir`.
+pub fn rcon_password(dir: &Path) -> Option<String> {
+    let text = fs::read_to_string(dir.join("server.properties")).ok()?;
+    get(&text, '=', "rcon.password").filter(|p| !p.is_empty())
 }
 
 /// The value of `key` in a `key<sep>value` file.
@@ -156,24 +173,50 @@ mod tests {
         write_options(dir.path(), &["a.zip", "b.zip"], &options).unwrap();
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
-            "version:4700\nresourcePacks:[\"vanilla\",\"fabric\",\"file/a.zip\",\"file/b.zip\"]\nlang:fr_fr\n"
+            "version:4700\nresourcePacks:[\"vanilla\",\"fabric\",\"file/a.zip\",\"file/b.zip\"]\nlang:fr_fr\n\
+             onboardAccessibility:false\n"
         );
         write_options(dir.path(), &[], &[]).unwrap();
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
-            "version:4700\nresourcePacks:[\"vanilla\",\"fabric\"]\nlang:fr_fr\n"
+            "version:4700\nresourcePacks:[\"vanilla\",\"fabric\"]\nlang:fr_fr\nonboardAccessibility:false\n"
         );
     }
 
+    /// The accessibility onboarding screen of a first launch comes before
+    /// Quick Play: the client would wait there instead of joining the server.
     #[test]
-    fn options_are_not_created_for_nothing() {
+    fn options_skip_the_accessibility_onboarding() {
         let dir = tempfile::tempdir().unwrap();
         write_options(dir.path(), &[], &[]).unwrap();
-        assert!(!dir.path().join("options.txt").exists());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("options.txt")).unwrap(),
+            "onboardAccessibility:false\n"
+        );
+        fs::remove_file(dir.path().join("options.txt")).unwrap();
         write_options(dir.path(), &["a.zip"], &[]).unwrap();
         assert_eq!(
             fs::read_to_string(dir.path().join("options.txt")).unwrap(),
-            "resourcePacks:[\"vanilla\",\"file/a.zip\"]\n"
+            "onboardAccessibility:false\nresourcePacks:[\"vanilla\",\"file/a.zip\"]\n"
+        );
+
+        // The player's or the profile's choice stays.
+        fs::write(
+            dir.path().join("options.txt"),
+            "onboardAccessibility:true\n",
+        )
+        .unwrap();
+        write_options(dir.path(), &[], &[]).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.path().join("options.txt")).unwrap(),
+            "onboardAccessibility:true\n"
+        );
+        let profile = [("onboardAccessibility".to_owned(), "true".to_owned())];
+        fs::remove_file(dir.path().join("options.txt")).unwrap();
+        write_options(dir.path(), &[], &profile).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.path().join("options.txt")).unwrap(),
+            "onboardAccessibility:true\n"
         );
     }
 
@@ -234,5 +277,17 @@ mod tests {
             .collect();
         left.sort();
         assert_eq!(left, ["a.jar", "c.zip", "d.jar", "notes.txt"]);
+    }
+
+    /// A download the CLI did not finish (interrupted) left its `.part`.
+    #[test]
+    fn keep_only_removes_unfinished_downloads() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["a.jar", "b-1.0.part"] {
+            fs::write(dir.path().join(name), b"x").unwrap();
+        }
+        keep_only(dir.path(), Kind::Mod, &["a.jar"]).unwrap();
+        assert!(!dir.path().join("b-1.0.part").exists());
+        assert!(dir.path().join("a.jar").exists());
     }
 }

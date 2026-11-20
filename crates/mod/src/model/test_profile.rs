@@ -14,6 +14,8 @@ use mc_core::model::{parse_toml, read_file};
 
 /// Directory of the profiles, at the repository root.
 pub const DIR: &str = "test-profiles";
+/// The game option of the graphics preset.
+const GRAPHICS_PRESET: &str = "graphicsPreset";
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -25,7 +27,7 @@ pub struct TestProfile {
     /// Whether the mod's CI runs the Fabric gametests with the profile's mods.
     #[serde(default)]
     pub ci: bool,
-    /// Modrinth mods, as `<slug>` or `<slug>@<version>`.
+    /// Modrinth mods, as `<slug>@<version>`: pinned.
     #[serde(default)]
     pub mods: Vec<String>,
     /// Modrinth resource packs, as `<slug>` or `<slug>@<version>`, enabled in
@@ -69,18 +71,37 @@ impl TestProfile {
         for wanted in profile.mods.iter().chain(&profile.packs) {
             Wanted::parse(wanted)?;
         }
+        // Versioned with the mod, a profile runs the same mods at each commit.
+        for wanted in &profile.mods {
+            let Wanted { slug, version } = Wanted::parse(wanted)?;
+            if version.is_none() {
+                return Err(Error::usage(
+                    format!("mod `{slug}` has no version in test profile `{name}`"),
+                    format!(
+                        "pin it as `{slug}@<version>`, a Modrinth version number or id, such as `sodium@mc26.3-0.9.2-fabric`"
+                    ),
+                ));
+            }
+        }
         for (key, value) in &profile.options {
             option_value(key, value)?;
         }
         Ok(profile)
     }
 
-    /// The game options as `options.txt` writes them.
+    /// The game options as `options.txt` writes them. They select the
+    /// `custom` graphics preset unless they name one: the game applies any
+    /// other preset over the graphics options, such as `renderDistance`.
     pub fn options_lines(&self) -> Result<Vec<(String, String)>> {
-        self.options
+        let mut lines = self
+            .options
             .iter()
             .map(|(key, value)| Ok((key.clone(), option_value(key, value)?)))
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+        if !lines.is_empty() && !self.options.contains_key(GRAPHICS_PRESET) {
+            lines.push((GRAPHICS_PRESET.to_owned(), "\"custom\"".to_owned()));
+        }
+        Ok(lines)
     }
 }
 
@@ -189,7 +210,7 @@ mod tests {
         write(
             dir.path(),
             "sodium",
-            "loader = \"fabric\"\nmods = [\"sodium@mc26.3-0.9.3-beta.5-fabric\", \"lithium\"]\n\
+            "loader = \"fabric\"\nmods = [\"sodium@mc26.3-0.9.3-beta.5-fabric\", \"lithium@fWv5bnZk\"]\n\
              packs = [\"faithful-32x\"]\n\n[options]\nrenderDistance = 8\nlang = \"fr_fr\"\nvsync = false\n",
         );
         let profile = TestProfile::load(dir.path(), "sodium").unwrap();
@@ -202,14 +223,38 @@ mod tests {
                 ("lang".to_owned(), "fr_fr".to_owned()),
                 ("renderDistance".to_owned(), "8".to_owned()),
                 ("vsync".to_owned(), "false".to_owned()),
+                ("graphicsPreset".to_owned(), "\"custom\"".to_owned()),
             ]
         );
+    }
+
+    /// The game applies its graphics preset over the graphics options unless
+    /// it is `custom`: a profile's options select it, unless the profile sets
+    /// a preset itself; a profile without options leaves the game's.
+    #[test]
+    fn options_select_the_custom_graphics_preset() {
+        let fast = TestProfile {
+            options: toml::from_str("graphicsPreset = '\"fast\"'\nrenderDistance = 4\n").unwrap(),
+            ..TestProfile::default()
+        };
+        assert_eq!(
+            fast.options_lines().unwrap(),
+            [
+                ("graphicsPreset".to_owned(), "\"fast\"".to_owned()),
+                ("renderDistance".to_owned(), "4".to_owned()),
+            ]
+        );
+        assert!(TestProfile::default().options_lines().unwrap().is_empty());
     }
 
     #[test]
     fn a_ci_profile_runs_on_fabric() {
         let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), "sodium", "ci = true\nmods = [\"sodium\"]\n");
+        write(
+            dir.path(),
+            "sodium",
+            "ci = true\nmods = [\"sodium@mc26.3-0.9.2-fabric\"]\n",
+        );
         assert!(TestProfile::load(dir.path(), "sodium").unwrap().ci);
         write(dir.path(), "fabric", "ci = true\nloader = \"fabric\"\n");
         assert!(TestProfile::load(dir.path(), "fabric").unwrap().ci);
@@ -218,6 +263,20 @@ mod tests {
         let err = TestProfile::load(dir.path(), "neoforge").unwrap_err();
         assert!(err.to_string().contains("other than Fabric"), "{err}");
         assert!(err.hint().contains("loader = \"fabric\""), "{}", err.hint());
+    }
+
+    /// A profile is versioned with the mod: the same commit runs the same mods,
+    /// in CI too. A resource pack may follow the latest version.
+    #[test]
+    fn a_profile_pins_the_version_of_its_mods() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "sodium", "ci = true\nmods = [\"sodium\"]\n");
+        let err = TestProfile::load(dir.path(), "sodium").unwrap_err();
+        assert!(err.to_string().contains("`sodium` has no version"), "{err}");
+        assert!(err.hint().contains("sodium@<version>"), "{}", err.hint());
+
+        write(dir.path(), "packs", "packs = [\"faithful-32x\"]\n");
+        TestProfile::load(dir.path(), "packs").unwrap();
     }
 
     #[test]

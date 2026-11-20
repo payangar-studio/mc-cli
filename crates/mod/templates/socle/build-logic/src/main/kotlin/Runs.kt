@@ -11,6 +11,7 @@
 
 import java.io.File
 import org.gradle.api.Project
+import org.gradle.api.Task
 
 /** Game directory of the runs, or null for the loader's default. */
 val Project.modRunDir: File?
@@ -21,6 +22,24 @@ val Project.joinServerArgs: List<String>
     get() = (findProperty("mod.joinServer") as String?)?.takeIf { it.isNotBlank() }
         ?.let { listOf("--quickPlayMultiplayer", it) }
         ?: emptyList()
+
+/**
+ * Before the client run in the game directory `dir` of `mod run`: gives the
+ * options.txt `mod run` wrote (a profile's options, the resource packs) the
+ * data version of the Minecraft jar on `classpath` when it has none, so that
+ * the game keeps them as they are written.
+ */
+fun Task.stampOptionsVersion(dir: File, classpath: Iterable<File>) {
+    doFirst {
+        val options = dir.resolve("options.txt")
+        if (options.isFile) {
+            val text = options.readText()
+            if (text.lineSequence().none { it.startsWith("version:") }) {
+                options.writeText("version:${dataVersion(classpath)}\n$text")
+            }
+        }
+    }
+}
 
 /**
  * Run directory of the test profile the gametests run with

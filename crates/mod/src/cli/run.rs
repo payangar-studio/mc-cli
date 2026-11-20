@@ -99,11 +99,16 @@ fn loader(args: &Args, profile: &TestProfile, module: &ModToml) -> Result<Loader
                 format!("use one of the mod's loaders: {}", names()),
             )
         })?,
-        None => profile.loader.unwrap_or(if profile.ci {
-            Loader::Fabric
-        } else {
-            module.loaders[0]
-        }),
+        None => match (profile.loader, profile.ci) {
+            (Some(loader), _) => loader,
+            (None, true) => Loader::Fabric,
+            (None, false) => *module.loaders.first().ok_or_else(|| {
+                Error::usage(
+                    "the mod has no loader",
+                    "list its loaders in mod.toml, such as `loaders = [\"fabric\"]`",
+                )
+            })?,
+        },
     };
     if !module.loaders.contains(&loader) {
         return Err(Error::usage(
@@ -164,5 +169,12 @@ mod tests {
         };
         let err = loader(&args(None), &ci, &module(vec![Loader::Neoforge])).unwrap_err();
         assert!(err.to_string().contains("not built for fabric"), "{err}");
+    }
+
+    #[test]
+    fn a_mod_without_loaders_is_a_usage_error() {
+        let err = loader(&args(None), &TestProfile::default(), &module(Vec::new())).unwrap_err();
+        assert!(err.to_string().contains("no loader"), "{err}");
+        assert!(err.hint().contains("mod.toml"), "{}", err.hint());
     }
 }

@@ -49,20 +49,28 @@ extensions.configure<NeoForgeExtension> {
             sourceSet(common["client"])
         }
     }
-    // `runClient` and `runServer`, in `run/` or where `mod run` says (Runs.kt).
+    // `runClient` and `runServer`, in `run/` or where `mod run` says (Runs.kt),
+    // with the mod alone: a run loads every registered mod by default, the
+    // gametest mod below included.
+    val main = mods[mod.id]
     runs {
         register("client") {
             client()
+            loadedMods.set(listOf(main))
             programArguments.addAll(joinServerArgs)
         }
         register("server") {
             server()
+            loadedMods.set(listOf(main))
             programArgument("--nogui")
         }
         configureEach {
             modRunDir?.let { gameDirectory.set(it) }
         }
     }
+}
+modRunDir?.let { dir ->
+    tasks.named("runClient") { stampOptionsVersion(dir, sourceSets["main"].runtimeClasspath) }
 }
 
 if (hasCommon) {

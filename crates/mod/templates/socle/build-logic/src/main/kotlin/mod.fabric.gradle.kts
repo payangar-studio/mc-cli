@@ -52,6 +52,9 @@ extensions.configure<LoomGradleExtensionAPI> {
         programArgs(joinServerArgs)
     }
 }
+modRunDir?.let { dir ->
+    tasks.named("runClient") { stampOptionsVersion(dir, sourceSets["client"].runtimeClasspath) }
+}
 
 dependencies {
     "minecraft"("com.mojang:minecraft:${pinned.minecraft}")

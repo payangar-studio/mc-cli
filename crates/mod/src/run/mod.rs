@@ -10,10 +10,11 @@
 //!   (`-Pmod.runDir`, read by `build-logic/src/main/kotlin/Runs.kt`). With a
 //!   server, it first starts the loader's dev server in `<run dir>/server/`,
 //!   waits for its `Done`, then has the client join it
-//!   (`-Pmod.joinServer`, `--quickPlayMultiplayer`), and stops it when the
-//!   client exits.
+//!   (`-Pmod.joinServer`, `--quickPlayMultiplayer`), and stops it through
+//!   RCON when the client exits.
 
 pub mod files;
+mod rcon;
 #[cfg(test)]
 mod tests;
 
@@ -48,6 +49,8 @@ pub const GAME_PORT: u16 = 25565;
 pub const RCON_PORT: u16 = 25575;
 /// How long the server gets to reach `Done`, its build included.
 const SERVER_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+/// How long the server gets to stop after `stop` before it is killed.
+const STOP_GRACE: Duration = Duration::from_secs(60);
 
 /// What a run takes.
 #[derive(Debug, Clone)]
@@ -260,7 +263,7 @@ fn download(platform: &dyn Platform, entry: &Entry, target: &Path) -> Result<()>
     if let Some(dir) = target.parent() {
         fs::create_dir_all(dir).context(format!("creating {}", dir.display()))?;
     }
-    let part = target.with_extension("part");
+    let part = target.with_extension(files::PART);
     let mut file = fs::File::create(&part).context(format!("writing {}", part.display()))?;
     let hashes = copy_hashing(&mut reader, &mut file);
     drop(file);
@@ -328,9 +331,8 @@ pub fn launch(root: &Path, plan: &Plan, ports: Option<Ports>) -> Result<()> {
     };
     println!("Run directory: {}", plan.dir.display());
     let status = client.status();
-    if let Some(mut server) = server {
-        let _ = server.kill();
-        let _ = server.wait();
+    if let (Some(mut server), Some(ports)) = (server, ports) {
+        stop_server(&mut server, &plan.dir.join(SERVER_DIR), ports);
     }
     let status = status.context("starting the Gradle wrapper")?;
     if status.success() {
@@ -399,6 +401,37 @@ fn start_server(root: &Path, plan: &Plan, ports: Ports) -> Result<Child> {
         dir.join("server.properties").display()
     );
     Ok(child)
+}
+
+/// Stops the dev server whose Gradle wrapper is `server`: `stop` through RCON,
+/// which saves the world, then waits for the wrapper to exit. Killing the
+/// wrapper is the fallback, when RCON fails or the server does not stop in
+/// time: on Windows the wrapper is `cmd.exe`, and the server outlives it.
+fn stop_server(server: &mut Child, dir: &Path, ports: Ports) {
+    let sent = match files::rcon_password(dir) {
+        Some(password) => rcon::command(ports.rcon, &password, "stop"),
+        None => Err(std::io::Error::other(
+            "no RCON password in server.properties",
+        )),
+    };
+    match sent {
+        Ok(()) => {
+            let deadline = Instant::now() + STOP_GRACE;
+            while Instant::now() < deadline {
+                if let Ok(Some(_)) = server.try_wait() {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(200));
+            }
+            tracing::warn!(
+                "the dev server did not stop within {}s of `stop`, killed",
+                STOP_GRACE.as_secs()
+            );
+        }
+        Err(e) => tracing::warn!("cannot stop the dev server through RCON ({e}), killed"),
+    }
+    let _ = server.kill();
+    let _ = server.wait();
 }
 
 /// Whether the server log at `log` has its `Done` line, in the layout of

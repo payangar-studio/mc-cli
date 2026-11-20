@@ -144,6 +144,41 @@ fn builds_with_neoforge_only() {
     assert_library_tests_passed(&root, "neoforge", COMMON_LIBRARY_TESTS);
 }
 
+/// The NeoForge `runClient` and `runServer` of `mod run` load the mod alone:
+/// ModDevGradle loads every registered mod by default, the gametest mod
+/// `<id>_gametest` included. Read in the `fml.modFolders` argument of each run,
+/// printed by an init script.
+#[test]
+#[ignore = "downloads Gradle, NeoForge and Minecraft"]
+fn the_neoforge_runs_load_the_mod_without_its_test_mod() {
+    let (tmp, root) = init("neoforge", "both-required");
+    let script = tmp.path().join("mod-folders.init.gradle");
+    fs::write(
+        &script,
+        r#"gradle.projectsEvaluated {
+    def neoforge = rootProject.findProject(':neoforge')
+    if (neoforge == null) return
+    ['runClient', 'runServer'].each { name ->
+        def folders = neoforge.tasks.getByName(name).allJvmArgs.find { it.startsWith('-Dfml.modFolders=') }
+        println("$name $folders")
+    }
+}
+"#,
+    )
+    .unwrap();
+    let output = gradle(&root, &["-I", script.to_str().unwrap(), "help"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for run in ["runClient", "runServer"] {
+        let line = stdout
+            .lines()
+            .find(|l| l.starts_with(&format!("{run} ")))
+            .unwrap_or_else(|| panic!("no mod folders printed for {run}"));
+        assert!(line.contains("swift_blades%%"), "{line}");
+        assert!(!line.contains("swift_blades_gametest"), "{line}");
+    }
+}
+
 /// The loader metadata follows `mod.toml`: the side, and each dependency for
 /// the loaders it names.
 #[test]
@@ -484,7 +519,8 @@ fn assert_every_language_file_merged(root: &Path) {
 }
 
 /// Replaces the mod's `CommonEntrypoint` with one that builds a config schema
-/// through its copy of the library and prints the class it got.
+/// through its copy of the library and prints the class it got. It keeps the
+/// `NETWORK` the loader's entrypoints register.
 fn use_the_library(root: &Path, id: &str, package: &str) {
     let path = root.join(format!(
         "fabric/src/main/java/{}/CommonEntrypoint.java",
@@ -499,17 +535,25 @@ import {package}.vendor.config.ConfigSchema;
 import {package}.vendor.config.ModSide;
 import {package}.vendor.config.Scope;
 import {package}.vendor.config.Setting;
+import {package}.vendor.network.ModNetwork;
 
 public final class CommonEntrypoint {{
     public static final String MOD_ID = "{id}";
 
+    private static final ConfigSchema SCHEMA = schema();
+
+    public static final ModNetwork NETWORK = new ModNetwork(SCHEMA);
+
     private CommonEntrypoint() {{}}
 
-    public static void init() {{
+    private static ConfigSchema schema() {{
         ConfigSchema.Builder config = ConfigSchema.builder(MOD_ID, ModSide.BOTH_REQUIRED);
         config.define(Setting.integer("range", Scope.SERVER, 8, 1, 64));
-        ConfigSchema schema = config.build();
-        System.out.println("library of " + schema.modId() + ": " + ConfigSchema.class.getName());
+        return config.build();
+    }}
+
+    public static void init() {{
+        System.out.println("library of " + SCHEMA.modId() + ": " + ConfigSchema.class.getName());
     }}
 }}
 "#

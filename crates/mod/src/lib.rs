@@ -10,5 +10,7 @@ pub mod model;
 pub use mc_core::prompt;
 pub mod design;
 pub mod github;
+pub mod run;
+pub mod sides;
 pub mod socle;
 pub mod versions;

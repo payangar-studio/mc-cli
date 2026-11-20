@@ -6,6 +6,11 @@
 # - `client`: Fabric's client gametests, dev and production clients, and
 #   NeoForge's client self-test, on a virtual display with software rendering
 #   (`./gradlew clientCheck`).
+# - `profile`: one job per test profile with `ci = true`
+#   (test-profiles/<name>.toml), Fabric's server and client gametests with the
+#   profile's mods (`mod run --profile <name> --prepare-only --server`, then
+#   `./gradlew :fabric:runGameTest :fabric:runClientGameTest
+#   -Pmod.testProfile=runs/<name>`). Screenshot comparisons are skipped there.
 # Every test task fails when it ran no test. The renders of the client
 # gametests are uploaded as the `screenshots` artifact (dev client) and the
 # `production-screenshots` one. References come from `screenshots`
@@ -92,4 +97,83 @@ jobs:
           path: |
             */build/run/*/logs/
             */build/run/*/crash-reports/
+          if-no-files-found: ignore
+
+  # The test profiles with `ci = true`, as a JSON list of names.
+  profiles:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      names: ${{ steps.list.outputs.names }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: List the CI profiles
+        id: list
+        run: |
+          python3 - >> "$GITHUB_OUTPUT" <<'EOF'
+          import json, pathlib, tomllib
+          names = [p.stem for p in sorted(pathlib.Path("test-profiles").glob("*.toml"))
+                   if tomllib.loads(p.read_text()).get("ci") is True]
+          print("names=" + json.dumps(names))
+          EOF
+
+  profile:
+    needs: profiles
+    if: ${{ needs.profiles.outputs.names != '[]' }}
+    name: profile ${{ matrix.profile }}
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: ${{ fromJSON(needs.profiles.outputs.names) }}
+    runs-on: ubuntu-24.04
+    # The game servers and clients it starts could hang.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      PROFILE: ${{ matrix.profile }}
+      # Keeps SDL on OpenGL with Mesa's software renderer.
+      SDL_OPENGL_FORCE_SRGB_FRAMEBUFFER: skip
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: gradle
+      - name: Install the virtual display and the software renderers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb mesa-vulkan-drivers
+      # The release of mc-cli that wrote the socle (`.mod/socle.toml`).
+      - name: Install mod
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open(".mod/socle.toml", "rb"))["version"])')
+          dir="$RUNNER_TEMP/mc-cli"
+          mkdir -p "$dir/bin"
+          gh release download "v$version" -R payangar-studio/mc-cli -D "$dir" \
+            -p "mod-$version-x86_64-unknown-linux-musl.tar.gz" \
+            -p "mod-$version-x86_64-unknown-linux-musl.tar.gz.sha256"
+          (cd "$dir" && sha256sum -c ./*.sha256)
+          tar -xzf "$dir"/*.tar.gz -C "$dir/bin"
+          echo "$dir/bin" >> "$GITHUB_PATH"
+      - name: Download the profile's mods
+        run: mod run --profile "$PROFILE" --prepare-only --server
+      - name: Run the gametests with the profile's mods
+        run: ./gradlew --console=plain :fabric:runGameTest :fabric:runClientGameTest "-Pmod.testProfile=runs/$PROFILE"
+      - name: Upload the logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: profile-${{ matrix.profile }}-logs
+          path: |
+            fabric/build/run/*/logs/
+            fabric/build/run/*/crash-reports/
           if-no-files-found: ignore

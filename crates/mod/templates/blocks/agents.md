@@ -26,6 +26,7 @@ Every command runs without a terminal: a missing value is an error that names th
 | Layer | Run locally |
 |---|---|
 | Build and unit tests | `./gradlew build` |
+| Side matrix: a dedicated server and a client with different mod sets, logs in `runs/sides/` | `mod test [--loader <loader>] [--case <case>]` |
 
 ### What counts as proof
 

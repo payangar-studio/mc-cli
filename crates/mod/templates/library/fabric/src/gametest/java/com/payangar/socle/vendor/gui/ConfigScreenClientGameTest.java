@@ -76,7 +76,7 @@ public class ConfigScreenClientGameTest implements FabricClientGameTest {
                 Component.literal("Config screen"), null, schema, Map.of(Scope.CLIENT, client, Scope.SERVER, server)));
         context.getInput().setCursorPos(1, 1);
         context.waitTicks(SETTLE_TICKS);
-        context.assertScreenshotEquals(reference("vendor_config_screen"));
+        assertRender(context, "vendor_config_screen");
 
         // The mouse turns a toggle off and moves a slider to the middle; the keyboard types.
         click(context, control(context, enabled), 0.5, 0.5);
@@ -129,14 +129,14 @@ public class ConfigScreenClientGameTest implements FabricClientGameTest {
         AbstractWidget button = context.computeOnClient(mc -> ((WidgetGallery) mc.gui.screen()).button);
         hover(context, button, 0.5, 0.5);
         context.waitTicks(SETTLE_TICKS);
-        context.assertScreenshotEquals(reference("vendor_widget_states"));
+        assertRender(context, "vendor_widget_states");
 
         // An open dropdown above the widgets under it.
         AbstractWidget dropdown = context.computeOnClient(mc -> ((WidgetGallery) mc.gui.screen()).dropdown);
         click(context, dropdown, 0.5, 0.5);
         context.getInput().setCursorPos(1, 1);
         context.waitTicks(SETTLE_TICKS);
-        context.assertScreenshotEquals(reference("vendor_dropdown_open"));
+        assertRender(context, "vendor_dropdown_open");
 
         // Cases that once broke, each checked on its own so that one failing hides no other.
         Path dir = file.getParent();
@@ -284,6 +284,16 @@ public class ConfigScreenClientGameTest implements FabricClientGameTest {
                 .map(id -> id.substring(0, id.length() - suffix.length()))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("no test mod named <id>" + suffix));
+    }
+
+    /**
+     * Compares the screen with the reference {@code name}, except under a test profile
+     * ({@code mod.testProfile}), whose mods change the render.
+     */
+    private static void assertRender(ClientGameTestContext context, String name) {
+        if (System.getProperty("mod.testProfile") == null) {
+            context.assertScreenshotEquals(reference(name));
+        }
     }
 
     /**

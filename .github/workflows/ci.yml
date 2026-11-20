@@ -88,6 +88,11 @@ jobs:
   # The test pyramid of a project made by `mod init`: each layer's example
   # passes and each guard catches its defect. Same packages and environment as
   # the client job of the mod's workflow (templates/socle/.github/workflows).
+  # `every_layer_passes` is the end-to-end test of the socle: a mod with both
+  # loaders builds and passes every test layer, the shared library's tests
+  # included. The Gradle cache is keyed on what sets the generated mods'
+  # dependencies: the pinned versions and the build files of the socle and
+  # the skeleton.
   mod-tests:
     runs-on: ubuntu-24.04
     # The game servers and clients it starts could hang.
@@ -100,6 +105,13 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
+          cache: gradle
+          cache-dependency-path: |
+            crates/mod/src/versions.rs
+            crates/mod/templates/socle/**/*.gradle*
+            crates/mod/templates/socle/**/*.kt
+            crates/mod/templates/socle/**/*.properties
+            crates/mod/templates/skeleton/*.gradle*
       - name: Install the virtual display and the software renderers
         run: |
           sudo apt-get update
@@ -118,4 +130,76 @@ jobs:
         with:
           name: mod-tests
           path: ${{ runner.temp }}/mod-tests/
+          if-no-files-found: ignore
+      # setup-java saves ~/.gradle/caches after the job. Gradle's build cache
+      # stays out of it: a later run would take the test results from it
+      # instead of running the tests.
+      - name: Drop Gradle's build cache before the cache is saved
+        run: rm -rf ~/.gradle/caches/build-cache-1
+
+  # The side matrix of projects made by `mod init` (`mod test`): a dedicated
+  # server and a HeadlessMC client with different mod sets, for each side on
+  # both loaders, and each case on its deliberate defect. One job, so that the
+  # generated mods share one Gradle cache: parallel jobs got throttled by Maven
+  # Central (HTTP 429).
+  mod-sides:
+    runs-on: ubuntu-24.04
+    # The game servers and clients it starts could hang.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Install the stable Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo test -p mc-mod --locked --test side_matrix -- --ignored --test-threads=1 --nocapture
+        env:
+          MOD_SIDES_ARTIFACTS: ${{ runner.temp }}/mod-sides
+      - name: Upload the logs of the generated mods
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mod-sides
+          path: ${{ runner.temp }}/mod-sides/
+          if-no-files-found: ignore
+
+  # `mod run` on a project made by `mod init`: with `--server`, the client,
+  # on a virtual display with software rendering, joins the dev server; a CI
+  # profile with Sodium passes the steps of the mod workflow's `profile` job.
+  mod-run:
+    runs-on: ubuntu-24.04
+    # The game servers and clients it starts could hang.
+    timeout-minutes: 60
+    env:
+      # Keeps SDL on OpenGL with Mesa's software renderer.
+      SDL_OPENGL_FORCE_SRGB_FRAMEBUFFER: skip
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Install the virtual display and the software renderers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb mesa-vulkan-drivers
+      - name: Install the stable Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo test -p mc-mod --locked --test mod_run -- --ignored --nocapture --test-threads=1
+        env:
+          MOD_TESTS_ARTIFACTS: ${{ runner.temp }}/mod-run
+      - name: Upload the logs of the generated mods
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mod-run
+          path: ${{ runner.temp }}/mod-run/
           if-no-files-found: ignore

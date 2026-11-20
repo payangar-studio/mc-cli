@@ -484,7 +484,8 @@ fn assert_every_language_file_merged(root: &Path) {
 }
 
 /// Replaces the mod's `CommonEntrypoint` with one that builds a config schema
-/// through its copy of the library and prints the class it got.
+/// through its copy of the library and prints the class it got. It keeps the
+/// `NETWORK` the loader's entrypoints register.
 fn use_the_library(root: &Path, id: &str, package: &str) {
     let path = root.join(format!(
         "fabric/src/main/java/{}/CommonEntrypoint.java",
@@ -499,17 +500,25 @@ import {package}.vendor.config.ConfigSchema;
 import {package}.vendor.config.ModSide;
 import {package}.vendor.config.Scope;
 import {package}.vendor.config.Setting;
+import {package}.vendor.network.ModNetwork;
 
 public final class CommonEntrypoint {{
     public static final String MOD_ID = "{id}";
 
+    private static final ConfigSchema SCHEMA = schema();
+
+    public static final ModNetwork NETWORK = new ModNetwork(SCHEMA);
+
     private CommonEntrypoint() {{}}
 
-    public static void init() {{
+    private static ConfigSchema schema() {{
         ConfigSchema.Builder config = ConfigSchema.builder(MOD_ID, ModSide.BOTH_REQUIRED);
         config.define(Setting.integer("range", Scope.SERVER, 8, 1, 64));
-        ConfigSchema schema = config.build();
-        System.out.println("library of " + schema.modId() + ": " + ConfigSchema.class.getName());
+        return config.build();
+    }}
+
+    public static void init() {{
+        System.out.println("library of " + SCHEMA.modId() + ": " + ConfigSchema.class.getName());
     }}
 }}
 "#

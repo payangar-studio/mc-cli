@@ -130,3 +130,34 @@ jobs:
       # instead of running the tests.
       - name: Drop Gradle's build cache before the cache is saved
         run: rm -rf ~/.gradle/caches/build-cache-1
+
+  # The side matrix of projects made by `mod init` (`mod test`): a dedicated
+  # server and a HeadlessMC client with different mod sets, for each side on
+  # both loaders, and each case on its deliberate defect. One job, so that the
+  # generated mods share one Gradle cache: parallel jobs got throttled by Maven
+  # Central (HTTP 429).
+  mod-sides:
+    runs-on: ubuntu-24.04
+    # The game servers and clients it starts could hang.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Install the stable Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo test -p mc-mod --locked --test side_matrix -- --ignored --test-threads=1 --nocapture
+        env:
+          MOD_SIDES_ARTIFACTS: ${{ runner.temp }}/mod-sides
+      - name: Upload the logs of the generated mods
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mod-sides
+          path: ${{ runner.temp }}/mod-sides/
+          if-no-files-found: ignore

@@ -119,14 +119,19 @@ pub fn run_dir(server: &Path, name: &str, machine: &Machine<'_>) -> Step<tempfil
 /// run fail.
 pub fn ready_to_start(dir: &Path) -> Step<()> {
     write(&dir.join("eula.txt"), "eula=true\n")?;
-    let port = TcpListener::bind(("127.0.0.1", 0))
-        .and_then(|l| l.local_addr())
-        .map_err(|e| format!("cannot find a free port: {e}"))?
-        .port();
+    let port = free_port()?;
     write(
         &dir.join("server.properties"),
         &format!("server-port={port}\n"),
     )
+}
+
+/// A TCP port free on this machine right now.
+pub fn free_port() -> Step<u16> {
+    TcpListener::bind(("127.0.0.1", 0))
+        .and_then(|l| l.local_addr())
+        .map(|a| a.port())
+        .map_err(|e| format!("cannot find a free port: {e}"))
 }
 
 /// Copies `from` into `to`, replacing files; with `link`, hard-links files
@@ -166,7 +171,7 @@ fn write(path: &Path, text: &str) -> Step<()> {
 }
 
 /// Downloads `url` into the file `to`.
-fn download(fetch: &dyn Fetch, url: &str, to: &Path) -> Step<()> {
+pub fn download(fetch: &dyn Fetch, url: &str, to: &Path) -> Step<()> {
     let mut body = fetch.get(url).map_err(reason)?;
     let mut file = fs::File::create(to).map_err(io_err("creating", to))?;
     io::copy(&mut body, &mut file).map_err(|e| format!("cannot download {url}: {e}"))?;

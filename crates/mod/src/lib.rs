@@ -9,5 +9,6 @@ pub use mc_core::error;
 pub mod model;
 pub use mc_core::prompt;
 pub mod github;
+pub mod sides;
 pub mod socle;
 pub mod versions;

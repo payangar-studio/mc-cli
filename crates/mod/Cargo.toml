@@ -23,6 +23,8 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 serde_json.workspace = true
 ureq.workspace = true
+ctrlc.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true
@@ -32,3 +34,4 @@ tempfile.workspace = true
 mockito.workspace = true
 yaml-rust2.workspace = true
 zip.workspace = true
+mc-core = { workspace = true, features = ["fake"] }

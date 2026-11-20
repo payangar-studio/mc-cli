@@ -4,8 +4,8 @@
 //! from `/docs` at `https://<owner>.github.io/<repo>/design/`.
 //!
 //! On an empty GitHub repository, the first branch pushed becomes the default
-//! one. The default branch must be the newest Minecraft version, so `design`
-//! is pushed only once that version branch is on `origin`.
+//! one. The default branch must be a Minecraft version, so `design` is pushed
+//! only once a version branch is on `origin`.
 
 use std::path::Path;
 use std::process::Command;
@@ -29,8 +29,7 @@ pub enum Plan {
 /// The branches of the mod on `origin`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Remote {
-    /// The newest Minecraft version branch, here or on `origin`, which is on
-    /// `origin`: the default branch.
+    /// The newest Minecraft version branch on `origin`.
     pub version: String,
     pub design: Design,
 }
@@ -45,9 +44,10 @@ pub enum Design {
     Missing,
 }
 
-/// Reads the branches of `root` and of its `origin`. Refuses when the newest
-/// Minecraft version branch is not on `origin` yet; skips when there is no
-/// version branch, or when `origin` cannot be read.
+/// Reads the branches of `root` and of its `origin`. Refuses when `origin` has
+/// no Minecraft version branch while one is here; skips when there is no
+/// version branch at all, or when `origin` cannot be read. A version branch
+/// here only, such as the one `mod port` just created, is ignored otherwise.
 pub fn read(root: &Path) -> Result<Plan> {
     let local = git(root, &["for-each-ref", "--format=%(refname)", "refs/heads"])?;
     let local: Vec<&str> = local
@@ -67,25 +67,19 @@ pub fn read(root: &Path) -> Result<Plan> {
         .filter_map(|l| l.split_once('\t'))
         .filter_map(|(_, r)| r.strip_prefix("refs/heads/"))
         .collect();
-    let Some(version) = local
-        .iter()
-        .chain(&remote)
-        .filter_map(|b| version_key(b).map(|key| (key, *b)))
-        .max()
-        .map(|(_, b)| b.to_owned())
-    else {
-        return Ok(Plan::Skip(
-            "no branch named after a Minecraft version (`26.3`) here or on origin.".into(),
-        ));
+    let Some(version) = newest(&remote) else {
+        return match newest(&local) {
+            Some(here) => Err(Error::usage(
+                format!(
+                    "origin has no Minecraft version branch yet: push {here} first, since an empty repository makes the first branch pushed its default branch"
+                ),
+                format!("push it with `git push -u origin {here}`, then run `mod setup` again"),
+            )),
+            None => Ok(Plan::Skip(
+                "no branch named after a Minecraft version (`26.3`) here or on origin.".into(),
+            )),
+        };
     };
-    if !remote.contains(&version.as_str()) {
-        return Err(Error::usage(
-            format!(
-                "the branch {version} is not on origin yet: it must be the default branch of the GitHub repository, and an empty repository makes the first branch pushed the default"
-            ),
-            format!("push it with `git push -u origin {version}`, then run `mod setup` again"),
-        ));
-    }
     let design = if remote.contains(&BRANCH) {
         Design::OnRemote
     } else if local.contains(&BRANCH) {
@@ -110,6 +104,20 @@ pub fn push(root: &Path) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Whether `branch` is named after a Minecraft version (`26.3`).
+pub fn is_version(branch: &str) -> bool {
+    version_key(branch).is_some()
+}
+
+/// The newest Minecraft version branch among `branches`.
+fn newest(branches: &[&str]) -> Option<String> {
+    branches
+        .iter()
+        .filter_map(|b| version_key(b).map(|key| (key, *b)))
+        .max()
+        .map(|(_, b)| b.to_owned())
 }
 
 /// The numbers of a Minecraft version branch (`26.3`, `1.21.10`), which

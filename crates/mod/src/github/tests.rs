@@ -653,13 +653,13 @@ fn run(server: &ServerGuard, checkout: &Checkout) -> Result<Vec<String>> {
     )
 }
 
-/// On an empty repository the first branch pushed becomes the default: the
+/// On an empty repository the first branch pushed becomes the default: a
 /// version branch must be there before `design`.
 #[test]
-fn a_version_branch_missing_on_origin_stops_setup_before_any_change() {
+fn no_version_branch_on_origin_stops_setup_before_any_change() {
     for (pushed, local, missing) in [
         (&[][..], &["design"][..], "26.3"),
-        (&["26.3"][..], &["26.4", "design"][..], "26.4"),
+        (&[][..], &["26.4", "design"][..], "26.4"),
     ] {
         let mut server = Server::new();
         let tmp = checkout_with(pushed, local);
@@ -672,8 +672,9 @@ fn a_version_branch_missing_on_origin_stops_setup_before_any_change() {
 
         assert_eq!(err.kind(), ErrorKind::Usage);
         assert!(
-            err.to_string()
-                .contains(&format!("the branch {missing} is not on origin")),
+            err.to_string().contains(&format!(
+                "origin has no Minecraft version branch yet: push {missing} first"
+            )),
             "{err}"
         );
         assert!(
@@ -691,6 +692,71 @@ fn a_version_branch_missing_on_origin_stops_setup_before_any_change() {
             ""
         );
     }
+}
+
+/// After `mod port`, the new version branch is here only until it is pushed:
+/// setup works with the branches of origin and leaves the default alone.
+#[test]
+fn a_newer_version_branch_here_only_is_ignored() {
+    let mut server = Server::new();
+    let tmp = checkout_with(&["26.3", "design"], &["26.4"]);
+    let _settled = settled(&mut server, false, "26.3");
+    let _pages = pages_on_design(&mut server);
+    let default = server.mock("PATCH", REPO).expect(0).create();
+
+    let done = run(&server, &tmp).unwrap();
+
+    default.assert();
+    assert_eq!(
+        done[done.len() - 2..],
+        ["Kept the default branch 26.3.".to_owned(), kept_pages()]
+    );
+}
+
+/// The default branch moves to a newer version once its CI is green and the
+/// user agrees, not on whichever setup runs next: setup prints the command.
+#[test]
+fn a_newer_version_branch_on_origin_is_proposed_not_set() {
+    let mut server = Server::new();
+    let tmp = checkout_with(&["26.3", "26.4", "design"], &[]);
+    let _settled = settled(&mut server, false, "26.3");
+    let _pages = pages_on_design(&mut server);
+    let default = server.mock("PATCH", REPO).expect(0).create();
+
+    let done = run(&server, &tmp).unwrap();
+
+    default.assert();
+    assert_eq!(
+        done[done.len() - 2..],
+        [
+            "Kept the default branch 26.3, although 26.4 is newer on origin. Once the CI of 26.4 is green, make it the default with `gh repo edit --default-branch 26.4`.".to_owned(),
+            kept_pages(),
+        ]
+    );
+}
+
+/// A repository created on GitHub with a README starts on `main`: the first
+/// setup makes the version branch the default.
+#[test]
+fn a_default_branch_that_names_no_version_is_set() {
+    let mut server = Server::new();
+    let tmp = checkout_with(&["26.3", "design"], &[]);
+    let _settled = settled(&mut server, false, "main");
+    let _pages = pages_on_design(&mut server);
+    let default = server
+        .mock("PATCH", REPO)
+        .match_body(Matcher::Json(json!({ "default_branch": "26.3" })))
+        .with_status(200)
+        .with_body("{}")
+        .create();
+
+    let done = run(&server, &tmp).unwrap();
+
+    default.assert();
+    assert_eq!(
+        done[done.len() - 2..],
+        ["Set the default branch to 26.3.".to_owned(), kept_pages()]
+    );
 }
 
 /// The state the live check found: `design` pushed first became the default.

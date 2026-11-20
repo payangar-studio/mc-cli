@@ -331,10 +331,13 @@ impl GitHub {
 /// - The ruleset of the release tags is created, or kept when it exists. A
 ///   private repository without a paid plan is skipped: GitHub refuses it.
 /// - `CODEOWNERS` names the token's account, unless GitHub already has one.
-/// - The newest Minecraft version branch becomes the default branch. It must
-///   be on `origin` already: setup refuses before any change otherwise.
-///   Without a version branch, or when git cannot read `origin`, this step
-///   and the next are skipped.
+/// - The newest Minecraft version branch on `origin` becomes the default
+///   branch when the default names no version yet (first setup, or `design`
+///   became the default). A default that is a version is kept: a newer one is
+///   only proposed, with the command that sets it. Setup refuses before any
+///   change when `origin` has no version branch while one is here. Without a
+///   version branch, or when git cannot read `origin`, this step and the next
+///   are skipped.
 /// - The `design` branch is pushed when `origin` lacks it, and Pages publishes
 ///   it from `/docs` unless the repository has a site already. A private
 ///   repository is skipped: its site would be public.
@@ -424,11 +427,17 @@ fn publish_design(
     done: &mut Vec<String>,
 ) -> Result<()> {
     let version = &remote.version;
-    if info.default_branch == *version {
+    let default = &info.default_branch;
+    if default == version {
         done.push(format!("Kept the default branch {version}."));
-    } else {
+    } else if !pages::is_version(default) {
         gh.set_default_branch(repo, version)?;
         done.push(format!("Set the default branch to {version}."));
+    } else {
+        // The default is on origin, so the newest version there is newer.
+        done.push(format!(
+            "Kept the default branch {default}, although {version} is newer on origin. Once the CI of {version} is green, make it the default with `gh repo edit --default-branch {version}`."
+        ));
     }
     let branch = design::BRANCH;
     match remote.design {

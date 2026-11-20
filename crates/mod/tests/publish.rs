@@ -39,14 +39,29 @@ fn git_ok(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_owned()
 }
 
+/// The `mod` binary run in `dir`, with the machine configuration and git's
+/// global configuration (`<tmp>/.gitconfig`, absent unless a test writes it)
+/// under `tmp`.
+fn mod_cmd(tmp: &Path, dir: &Path) -> Command {
+    let mut cmd = Command::cargo_bin("mod").unwrap();
+    cmd.current_dir(dir)
+        .env_remove("RUST_LOG")
+        .env("XDG_CONFIG_HOME", tmp.join(".machine-config"))
+        .env("GIT_CONFIG_GLOBAL", tmp.join(".gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    cmd
+}
+
 /// A mod made by `mod init` in `<tmp>/mod`, committed on its version branch.
 fn init_repo() -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
-    Command::cargo_bin("mod")
-        .unwrap()
-        .current_dir(tmp.path())
-        .env_remove("RUST_LOG")
-        .env("XDG_CONFIG_HOME", tmp.path().join(".machine-config"))
+    let root = init_in(tmp.path());
+    (tmp, root)
+}
+
+/// `mod init` in `<tmp>/mod`, committed on its version branch.
+fn init_in(tmp: &Path) -> PathBuf {
+    mod_cmd(tmp, tmp)
         .args([
             "init",
             "mod",
@@ -60,10 +75,10 @@ fn init_repo() -> (tempfile::TempDir, PathBuf) {
         ])
         .assert()
         .success();
-    let root = tmp.path().join("mod");
+    let root = tmp.join("mod");
     git_ok(&root, &["add", "-A"]);
     git_ok(&root, &["commit", "-qm", "init"]);
-    (tmp, root)
+    root
 }
 
 fn template() -> String {
@@ -87,6 +102,56 @@ fn init_lays_down_the_caller_and_enables_the_hook() {
         git_ok(&root, &["config", "--get", "core.hooksPath"]),
         HOOKS_PATH
     );
+}
+
+/// A clone has no local `core.hooksPath`: the next `mod` command in the
+/// repository enables the hooks.
+#[test]
+fn update_enables_the_hook_of_a_clone() {
+    let (tmp, root) = init_repo();
+    git_ok(&root, &["config", "--unset", "core.hooksPath"]);
+    mod_cmd(tmp.path(), &root).arg("update").assert().success();
+    assert_eq!(
+        git_ok(&root, &["config", "--get", "core.hooksPath"]),
+        HOOKS_PATH
+    );
+}
+
+/// A `core.hooksPath` set in git's global configuration (a hooks manager) is
+/// kept, with a warning, rather than overridden for the mod.
+#[test]
+fn init_keeps_a_global_hooks_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join(".gitconfig"),
+        "[core]\n\thooksPath = /shared/hooks\n",
+    )
+    .unwrap();
+    let out = mod_cmd(tmp.path(), tmp.path())
+        .args([
+            "init",
+            "mod",
+            "--id=swift_blades",
+            "--name=Swift Blades",
+            "--package=com.payangar.swiftblades",
+            "--side=both-required",
+            "--loaders=fabric",
+            "--license=MIT",
+            "--mc-version=26.3",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let root = tmp.path().join("mod");
+    let local = git(&root, &["config", "--local", "--get", "core.hooksPath"]);
+    assert!(
+        !local.status.success(),
+        "core.hooksPath set locally: {}",
+        String::from_utf8_lossy(&local.stdout)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("core.hooksPath is `/shared/hooks`"), "{err}");
 }
 
 /// The caller pins the reusable workflow to the release that embeds it, so
@@ -113,7 +178,11 @@ fn with_remote(tmp: &Path, root: &Path) {
 }
 
 fn commit_changelog(root: &Path, version: &str) {
-    fs::write(root.join(format!("changelogs/{version}.md")), "- Notes.\n").unwrap();
+    commit_notes(root, version, "- Notes.\n");
+}
+
+fn commit_notes(root: &Path, version: &str, notes: &str) {
+    fs::write(root.join(format!("changelogs/{version}.md")), notes).unwrap();
     git_ok(root, &["add", "-A"]);
     git_ok(root, &["commit", "-qm", version]);
 }
@@ -158,23 +227,54 @@ fn the_hook_reads_the_version_of_a_tag_naming_its_minecraft_version() {
 }
 
 #[test]
-fn the_hook_refuses_several_release_tags_at_once() {
+fn the_hook_refuses_a_changelog_without_notes() {
     let (tmp, root) = init_repo();
     with_remote(tmp.path(), &root);
-    commit_changelog(&root, "1.0.0");
-    commit_changelog(&root, "1.0.1");
-    git_ok(&root, &["tag", "v1.0.0", "HEAD~1"]);
-    git_ok(&root, &["tag", "v1.0.1"]);
-    let (ok, err) = push(&root, &["v1.0.0", "v1.0.1"]);
+    commit_notes(&root, "1.0.0", "\n  \n");
+    git_ok(&root, &["tag", "v1.0.0"]);
+    let (ok, err) = push(&root, &["v1.0.0"]);
     assert!(!ok);
-    assert!(err.contains("2 release tags in one push"), "{err}");
+    assert!(
+        err.contains("tag v1.0.0 has no changelogs/1.0.0.md in its commit"),
+        "{err}"
+    );
+}
 
-    // One at a time goes through; a branch push is not a release.
-    for tag in ["v1.0.0", "v1.0.1"] {
-        let (ok, err) = push(&root, &[tag]);
-        assert!(ok, "{err}");
+/// GitHub starts no workflow for a push of more than three tags: the hook
+/// refuses such a push when it carries a release tag, and lets the others go.
+#[test]
+fn the_hook_refuses_a_release_tag_among_more_than_three_tags() {
+    let (tmp, root) = init_repo();
+    with_remote(tmp.path(), &root);
+    for version in ["1.0.0", "1.0.1", "1.0.2"] {
+        commit_changelog(&root, version);
+        git_ok(&root, &["tag", &format!("v{version}")]);
     }
+    for tag in ["a", "b", "c", "d"] {
+        git_ok(&root, &["tag", tag]);
+    }
+    let (ok, err) = push(&root, &["v1.0.2", "a", "b", "c"]);
+    assert!(!ok);
+    assert!(err.contains("4 tags in one push"), "{err}");
+
+    // Up to three tags start their workflows; tags without a release do
+    // not publish.
+    let (ok, err) = push(&root, &["v1.0.0", "v1.0.1", "v1.0.2"]);
+    assert!(ok, "{err}");
+    let (ok, err) = push(&root, &["a", "b", "c", "d"]);
+    assert!(ok, "{err}");
     let (ok, err) = push(&root, &["26.3"]);
+    assert!(ok, "{err}");
+}
+
+/// A tag starting with `v` that is no version is not a release: the hook
+/// looks for no changelog.
+#[test]
+fn the_hook_ignores_a_tag_that_is_not_a_release() {
+    let (tmp, root) = init_repo();
+    with_remote(tmp.path(), &root);
+    git_ok(&root, &["tag", "vendor-sync"]);
+    let (ok, err) = push(&root, &["vendor-sync"]);
     assert!(ok, "{err}");
 }
 
@@ -205,15 +305,16 @@ fn step_script(name: &str) -> String {
 }
 
 /// Runs the step `Check the tag` on the commit `sha` of `root` for `tag`,
-/// as the checkout leaves it: the version branch as `origin/26.3`.
+/// as the checkout leaves it: the version branch as `origin/26.3`. Returns
+/// the step's outputs.
 fn check_tag(root: &Path, tag: &str, sha: &str) -> (bool, String, String) {
-    let env = root.join("../github-env");
+    let env = root.join("../github-output");
     let _ = fs::remove_file(&env);
     git_ok(root, &["checkout", "-q", sha]);
     let out = Process::new("bash")
         .args(["-e", "-c", &step_script("Check the tag")])
         .current_dir(root)
-        .env("GITHUB_ENV", &env)
+        .env("GITHUB_OUTPUT", &env)
         .env("GITHUB_REF_TYPE", "tag")
         .env("GITHUB_REF", format!("refs/tags/{tag}"))
         .env("GITHUB_REF_NAME", tag)
@@ -250,7 +351,7 @@ fn the_guard_accepts_a_tag_on_its_version_branch() {
     for tag in ["v1.0.0", "v1.0.0+26.3"] {
         let (ok, env, out) = check_tag(&root, tag, &on_branch);
         assert!(ok, "{tag}: {out}");
-        assert_eq!(env, "VERSION=1.0.0\n", "{tag}");
+        assert_eq!(env, "version=1.0.0\n", "{tag}");
     }
 }
 
@@ -278,6 +379,20 @@ fn the_guard_refuses_a_tag_without_changelog() {
 }
 
 #[test]
+fn the_guard_refuses_a_changelog_without_notes() {
+    let (_tmp, root) = init_repo();
+    commit_notes(&root, "1.0.0", "\n  \n");
+    let sha = git_ok(&root, &["rev-parse", "HEAD"]);
+    git_ok(&root, &["update-ref", "refs/remotes/origin/26.3", &sha]);
+    let (ok, _, out) = check_tag(&root, "v1.0.0", &sha);
+    assert!(!ok);
+    assert!(
+        out.contains("Tag v1.0.0 has no changelogs/1.0.0.md"),
+        "{out}"
+    );
+}
+
+#[test]
 fn the_guard_refuses_a_tag_naming_another_minecraft_version_or_no_version() {
     let (_tmp, root, on_branch, _) = guarded_repo();
     let (ok, _, out) = check_tag(&root, "v1.0.0+26.4", &on_branch);
@@ -289,4 +404,116 @@ fn the_guard_refuses_a_tag_naming_another_minecraft_version_or_no_version() {
     let (ok, _, out) = check_tag(&root, "vnext", &on_branch);
     assert!(!ok);
     assert!(out.contains("Tag vnext is not a release tag"), "{out}");
+}
+
+// The vault step of the reusable workflow, against a fake vault: `curl` is a
+// shell function answering each endpoint, `jq` is the real one.
+
+const FAKE_CURL: &str = r#"
+curl() {
+  local url="${!#}"
+  case "$url" in
+    */oidc-auth/login)
+      cat > /dev/null
+      if [[ -n "$FAKE_LOGIN_FAILS" ]]; then
+        echo "curl: (22) The requested URL returned error: 401" >&2
+        return 22
+      fi
+      echo '{"accessToken": "vault-token"}' ;;
+    */id-token) echo '{"value": "oidc-jwt"}' ;;
+    */api/v1/workspace) echo '{"workspaces": [{"name": "minecraft", "slug": "minecraft-a1b2"}]}' ;;
+    */api/v3/secrets/raw) echo "$FAKE_SECRETS" ;;
+    *) echo "unexpected curl $url" >&2; return 1 ;;
+  esac
+}
+"#;
+
+/// Runs the step `Read the secrets from the vault` with the vault holding
+/// `secrets` (name, value), and returns its success, the variables it
+/// exported and its stdout.
+fn read_vault(secrets: &[(&str, &str)], login_fails: bool) -> (bool, String, String) {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = tmp.path().join("github-env");
+    let secrets = serde_json::json!({
+        "secrets": secrets
+            .iter()
+            .map(|(k, v)| serde_json::json!({"secretKey": k, "secretValue": v}))
+            .collect::<Vec<_>>()
+    });
+    let script = format!(
+        "{FAKE_CURL}\n{}",
+        step_script("Read the secrets from the vault")
+    );
+    let out = Process::new("bash")
+        .args(["-e", "-c", &script])
+        .current_dir(tmp.path())
+        .env("GITHUB_ENV", &env)
+        .env("VAULT_URL", "https://vault.test/")
+        .env("IDENTITY_ID", "identity")
+        .env("VAULT_PROJECT", "minecraft")
+        .env("VAULT_ENVIRONMENT", "prod")
+        .env("VAULT_PATH", "/app")
+        .env("USER_AGENT", "test")
+        .env(
+            "ACTIONS_ID_TOKEN_REQUEST_URL",
+            "https://actions.test/id-token",
+        )
+        .env("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "request-token")
+        .env("GITHUB_REPOSITORY_OWNER", "payangar-studio")
+        .env("GITHUB_REPOSITORY", "payangar-studio/swift-blades")
+        .env("GITHUB_REF", "refs/tags/v1.0.0")
+        .env("FAKE_SECRETS", secrets.to_string())
+        .env("FAKE_LOGIN_FAILS", if login_fails { "1" } else { "" })
+        .output()
+        .unwrap();
+    (
+        out.status.success(),
+        fs::read_to_string(&env).unwrap_or_default(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+    )
+}
+
+#[test]
+fn the_vault_step_exports_both_tokens() {
+    let (ok, env, out) = read_vault(
+        &[
+            ("MC_MODRINTH_TOKEN", "modrinth-token"),
+            ("MC_CURSEFORGE_UPLOAD_TOKEN", "curseforge-token"),
+        ],
+        false,
+    );
+    assert!(ok, "{out}");
+    assert_eq!(
+        env,
+        "MC_MODRINTH_TOKEN=modrinth-token\nMC_CURSEFORGE_UPLOAD_TOKEN=curseforge-token\n"
+    );
+}
+
+/// A missing token stops the job before anything is published: with one
+/// token only, the build would publish on one platform and fail on the other.
+#[test]
+fn the_vault_step_refuses_a_missing_token() {
+    let (ok, _, out) = read_vault(&[("MC_MODRINTH_TOKEN", "modrinth-token")], false);
+    assert!(!ok, "{out}");
+    assert!(
+        out.contains("::error::MC_CURSEFORGE_UPLOAD_TOKEN is not in minecraft:/app"),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_vault_step_reports_a_refused_login() {
+    let (ok, env, out) = read_vault(
+        &[
+            ("MC_MODRINTH_TOKEN", "modrinth-token"),
+            ("MC_CURSEFORGE_UPLOAD_TOKEN", "curseforge-token"),
+        ],
+        true,
+    );
+    assert!(!ok, "{out}");
+    assert!(env.is_empty(), "{env}");
+    assert!(
+        out.contains("::error::The vault refused the login"),
+        "{out}"
+    );
 }

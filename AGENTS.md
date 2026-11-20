@@ -34,7 +34,7 @@ Each issue owns its command handler (`crates/modpack/src/cli/<command>.rs`, incl
 - Logs go to stderr through `tracing`; command output goes to stdout.
 - Machine locations (caches, data, config) come from the `directories` crate, never from hard-coded Linux paths, so that Windows follows without a rewrite.
 - User-facing messages are in English.
-- Until a modpack is published with this CLI, a format change (repository files, instance state) ships without migration or backward compatibility; migrate the test pack by hand.
+- Until a modpack or a mod is published with this CLI, a format change (repository files, instance state) ships without migration or backward compatibility; migrate the test pack and `payangar-studio/test-mod` by hand.
 
 ## Tests
 
@@ -49,7 +49,7 @@ Each issue owns its command handler (`crates/modpack/src/cli/<command>.rs`, incl
 
 Pushing a `v*` tag builds every binary of the workspace for `x86_64-unknown-linux-musl` and publishes a GitHub Release with `<binary>-<version>-x86_64-unknown-linux-musl.tar.gz` and its `.sha256` for each. A tag with a suffix (`v0.1.0-rc1`) is published as a prerelease.
 
-Every `uses:` of `.github/` is pinned by full commit SHA with its version in a comment; `scripts/check-workflow-pins.sh` enforces it in CI.
+Every `uses:` of `.github/` is pinned by full commit SHA with its version in a comment; `scripts/check-workflow-pins.sh` enforces it in CI. A socle's workflow template calls mc-cli's reusable workflows at the release tag of the workspace version instead (`@v<version>`).
 
 ## Harness
 

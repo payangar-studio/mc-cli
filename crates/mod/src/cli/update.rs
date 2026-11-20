@@ -15,5 +15,9 @@ pub struct Args {
 
 pub fn run(args: Args, ctx: &Context) -> Result<()> {
     let root = ctx.require_root_unchecked()?;
-    SOCLE.update::<Versions>(root, args.force)
+    SOCLE.update::<Versions>(root, args.force)?;
+    if let Some(warning) = crate::socle::enable_hooks(root) {
+        tracing::warn!("{warning}");
+    }
+    Ok(())
 }

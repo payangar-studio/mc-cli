@@ -11,6 +11,7 @@ release=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' "$
 failures=0
 expect() {
   local want=$1 name=$2 line=$3 got=0
+  mkdir -p "$(dirname "$tmp/$name.yml")"
   printf 'jobs:\n  job:\n    steps:\n%s\n' "$line" > "$tmp/$name.yml"
   bash "$check" "$tmp/$name.yml" > "$tmp/$name.out" || got=$?
   if [[ "$want" == pass && $got -ne 0 ]] || [[ "$want" == fail && $got -eq 0 ]]; then
@@ -31,11 +32,13 @@ expect fail short-sha "      - uses: actions/checkout@${sha:0:7} # v7.0.1"
 expect fail uppercase-sha "      - uses: actions/checkout@${sha^^} # v7.0.1"
 expect fail no-ref "      - uses: actions/checkout"
 expect fail no-comment "      - uses: actions/checkout@$sha"
-expect pass reusable-release "    uses: payangar-studio/mc-cli/.github/workflows/publish-mod.yml@v$release"
-expect fail reusable-other-tag "    uses: payangar-studio/mc-cli/.github/workflows/publish-mod.yml@v$release.1"
-expect fail reusable-branch "    uses: payangar-studio/mc-cli/.github/workflows/publish-mod.yml@main"
-expect fail reusable-other-repo "    uses: payangar-studio/other/.github/workflows/publish-mod.yml@v$release"
-expect fail action-release-tag "      - uses: payangar-studio/mc-cli/.github/actions/setup@v$release"
+# A socle's template may call mc-cli's reusable workflows at this release.
+expect pass templates/reusable-release "    uses: payangar-studio/mc-cli/.github/workflows/publish-mod.yml@v$release"
+expect fail reusable-release-outside-templates "    uses: payangar-studio/mc-cli/.github/workflows/publish-mod.yml@v$release"
+expect fail templates/reusable-other-tag "    uses: payangar-studio/mc-cli/.github/workflows/publish-mod.yml@v$release.1"
+expect fail templates/reusable-branch "    uses: payangar-studio/mc-cli/.github/workflows/publish-mod.yml@main"
+expect fail templates/reusable-other-repo "    uses: payangar-studio/other/.github/workflows/publish-mod.yml@v$release"
+expect fail templates/action-release-tag "      - uses: payangar-studio/mc-cli/.github/actions/setup@v$release"
 expect fail quoted-tag "        uses: 'actions/upload-artifact@v7'"
 expect fail flow-tag "      - {uses: actions/checkout@v7}"
 expect fail flow-second-key-tag "      - {name: Checkout, uses: actions/checkout@v7}"

@@ -66,9 +66,12 @@ pub static SOCLE: Socle = Socle {
 };
 
 /// Checks the repository's socle version against the CLI's, at the start of
-/// every command that works in a repository.
+/// every command that works in a repository, and enables the socle's git hooks
+/// in a clone, silently: `init` and `update` say why they do not run.
 pub fn check_version(root: &Path) -> Result<()> {
-    SOCLE.check_version::<Versions>(root)
+    SOCLE.check_version::<Versions>(root)?;
+    enable_hooks(root);
+    Ok(())
 }
 
 /// Socle files that already exist in `root` with other contents: those `init`
@@ -113,17 +116,21 @@ pub fn init(root: &Path, module: &ModToml, versions: Versions) -> Result<()> {
         std::fs::write(&path, file.contents).context(format!("writing {}", path.display()))?;
     }
     SOCLE.init(root, versions)?;
-    enable_hooks(root);
+    if let Some(warning) = enable_hooks(root) {
+        tracing::warn!("{warning}");
+    }
     Ok(())
 }
 
 /// Value of `core.hooksPath`: the socle's git hooks (`.mod/hooks/`).
 pub const HOOKS_PATH: &str = ".mod/hooks";
 
-/// Points `core.hooksPath` of the repository at the socle's hooks, unless it
-/// already points elsewhere. Only warns on failure: the CI checks again what
-/// the hooks check.
-fn enable_hooks(root: &Path) {
+/// Points `core.hooksPath` of the repository at the socle's hooks when git has
+/// no value for it at any level: `core.hooksPath` is local configuration, which
+/// a clone does not get. A value set elsewhere (a hooks manager) is kept.
+/// Returns why the socle's hooks do not run, if they do not; never fails: the
+/// CI checks again what the hooks check.
+pub fn enable_hooks(root: &Path) -> Option<String> {
     let git = |args: &[&str]| {
         std::process::Command::new("git")
             .args(args)
@@ -133,29 +140,30 @@ fn enable_hooks(root: &Path) {
             .filter(|o| o.status.success())
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
     };
-    let current = git(&[
-        "config",
-        "--local",
-        "--default",
-        "",
-        "--get",
-        "core.hooksPath",
-    ]);
-    match current.as_deref() {
-        Some("") => {
-            if git(&["config", "--local", "core.hooksPath", HOOKS_PATH]).is_none() {
-                tracing::warn!(
-                    "could not enable the socle's git hooks; run `git config core.hooksPath {HOOKS_PATH}`"
-                );
-            }
+    match git(&["rev-parse", "--show-prefix"]).as_deref() {
+        Some("") => {}
+        Some(prefix) => {
+            return Some(format!(
+                "the mod is in {prefix} of its git repository, not at its root: git looks for {HOOKS_PATH} from the root, so the socle's hooks do not run"
+            ));
         }
-        Some(HOOKS_PATH) => {}
-        Some(other) => tracing::warn!(
+        None => return Some("not a git repository: the socle's git hooks do not run".into()),
+    }
+    match git(&["config", "--default", "", "--get", "core.hooksPath"]).as_deref() {
+        Some("") => git(&["config", "--local", "core.hooksPath", HOOKS_PATH])
+            .is_none()
+            .then(|| {
+                format!(
+                    "could not enable the socle's git hooks; run `git config core.hooksPath {HOOKS_PATH}`"
+                )
+            }),
+        Some(HOOKS_PATH) => None,
+        Some(other) => Some(format!(
             "core.hooksPath is `{other}`: the socle's hooks in {HOOKS_PATH} do not run, run them from your own hooks"
-        ),
-        None => tracing::warn!(
+        )),
+        None => Some(format!(
             "could not read core.hooksPath; run `git config core.hooksPath {HOOKS_PATH}` to enable the socle's git hooks"
-        ),
+        )),
     }
 }
 

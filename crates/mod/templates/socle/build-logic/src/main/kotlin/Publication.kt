@@ -32,7 +32,12 @@ fun Project.configurePublication(mod: ModToml, pinned: Pinned, loader: String) {
     val number = "$modVersion+${pinned.minecraft}-$loader"
     val isDryRun = providers.gradleProperty("dryRun").map { it != "false" }.getOrElse(false)
     val changelog = rootDir.resolve("changelogs/$modVersion.md")
-    val ids = platformIds(rootDir.resolve("page/page.toml"))
+    // A build or a test neither warns about a platform left out nor fails on
+    // page/page.toml: both wait for publishMods.
+    val page = runCatching { platformIds(rootDir.resolve("page/page.toml")) }
+    val pageError = page.exceptionOrNull()?.message
+    val ids = page.getOrDefault(emptyMap())
+    val skipped = mutableListOf<String>()
     val dependencies = mod.dependenciesOf(loader)
 
     extensions.configure<ModPublishExtension> {
@@ -48,7 +53,7 @@ fun Project.configurePublication(mod: ModToml, pinned: Pinned, loader: String) {
         // page/page.toml is not declared at all.
         val modrinthId = ids["modrinth"].orEmpty()
         if (modrinthId.isEmpty()) {
-            logger.warn("$loader: Modrinth skipped, page/page.toml has no [modrinth] project_id. Create the project on Modrinth and write its id there to publish to it.")
+            skipped += "$loader: Modrinth skipped, page/page.toml has no [modrinth] project_id. Create the project on Modrinth and write its id there to publish to it."
         } else {
             modrinth {
                 projectId.set(modrinthId)
@@ -75,7 +80,7 @@ fun Project.configurePublication(mod: ModToml, pinned: Pinned, loader: String) {
 
         val curseforgeId = ids["curseforge"].orEmpty()
         if (curseforgeId.isEmpty()) {
-            logger.warn("$loader: CurseForge skipped, page/page.toml has no [curseforge] project_id. Create the project on CurseForge and write its id there to publish to it.")
+            skipped += "$loader: CurseForge skipped, page/page.toml has no [curseforge] project_id. Create the project on CurseForge and write its id there to publish to it."
         } else {
             curseforge {
                 projectId.set(curseforgeId)
@@ -95,11 +100,19 @@ fun Project.configurePublication(mod: ModToml, pinned: Pinned, loader: String) {
         }
     }
 
+    val warnings = skipped.toList()
+    tasks.named("publishMods") {
+        doFirst {
+            if (pageError != null) throw GradleException(pageError)
+            warnings.forEach { logger.warn(it) }
+        }
+    }
+
     if (isDryRun) {
         tasks.withType<PublishModTask>().configureEach {
+            val out = layout.buildDirectory.file("publishMods/${platform.name}.dry-run.json")
             doLast {
-                val out = project.layout.buildDirectory.file("publishMods/${platform.name}.dry-run.json").get().asFile
-                out.writeText(toJson(dryRunDescription(this as PublishModTask)) + "\n")
+                out.get().asFile.writeText(toJson(dryRunDescription(this as PublishModTask)) + "\n")
             }
         }
     }

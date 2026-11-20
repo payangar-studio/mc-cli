@@ -7,8 +7,8 @@
 # several Minecraft branches. Its commit must be on the branch named after the
 # mod's Minecraft version, and hold changelogs/<version>.md.
 #
-# Push tags one at a time: GitHub starts no workflow for a push of more than
-# three tags. Running this workflow by hand from a tag, with `dry-run`, checks
+# Push at most three tags at a time: GitHub starts no workflow for a push of
+# more than three tags. Running this workflow by hand from a tag, with `dry-run`, checks
 # the tag and shows what would be published, without publishing.
 #
 # Repository variables (Settings, Secrets and variables, Actions, Variables):
@@ -19,7 +19,7 @@ name: Publish
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
   workflow_dispatch:
     inputs:
       dry-run:

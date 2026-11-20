@@ -27,25 +27,25 @@ fn init(loaders: &str, side: &str) -> (tempfile::TempDir, PathBuf) {
 /// `init`, with the mod named `name`.
 fn init_named(loaders: &str, side: &str, name: &str) -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
+    let root = init_in(tmp.path(), "swift_blades", PACKAGE, name, loaders, side);
+    (tmp, root)
+}
+
+/// A project made by `mod init` in `<dir>/<id>`.
+fn init_in(dir: &Path, id: &str, package: &str, name: &str, loaders: &str, side: &str) -> PathBuf {
     Command::cargo_bin("mod")
         .unwrap()
-        .current_dir(tmp.path())
-        .env("XDG_CONFIG_HOME", tmp.path().join(".machine-config"))
-        .args([
-            "init",
-            "mod",
-            "--id=swift_blades",
-            "--license=MIT",
-            "--mc-version=26.3",
-        ])
-        .arg(format!("--package={PACKAGE}"))
+        .current_dir(dir)
+        .env("XDG_CONFIG_HOME", dir.join(".machine-config"))
+        .args(["init", id, "--license=MIT", "--mc-version=26.3"])
+        .arg(format!("--id={id}"))
+        .arg(format!("--package={package}"))
         .arg(format!("--name={name}"))
         .arg(format!("--loaders={loaders}"))
         .arg(format!("--side={side}"))
         .assert()
         .success();
-    let root = tmp.path().join("mod");
-    (tmp, root)
+    dir.join(id)
 }
 
 fn gradle(root: &Path, args: &[&str]) -> Output {
@@ -102,6 +102,7 @@ fn builds_with_both_loaders() {
     gradle_ok(&root, &["build"]);
     assert!(jar(&root, "fabric").is_file());
     assert!(jar(&root, "neoforge").is_file());
+    assert_library_tests_passed(&root, "common", COMMON_LIBRARY_TESTS);
 }
 
 #[test]
@@ -111,6 +112,7 @@ fn builds_with_fabric_only() {
     assert!(!root.join("common").exists());
     gradle_ok(&root, &["build"]);
     assert!(jar(&root, "fabric").is_file());
+    assert_library_tests_passed(&root, "fabric", COMMON_LIBRARY_TESTS);
 }
 
 /// A server mod loads in the Fabric Loader of its unit tests, which starts as
@@ -123,13 +125,23 @@ fn builds_a_fabric_server_mod() {
     assert!(jar(&root, "fabric").is_file());
 }
 
+/// A NeoForge-only mod has no client source set: the library's client code
+/// goes into `main`, next to the NeoForge config screen extension.
 #[test]
 #[ignore = "downloads Gradle, NeoForge and Minecraft"]
 fn builds_with_neoforge_only() {
     let (_tmp, root) = init("neoforge", "server");
     assert!(!root.join("common").exists());
+    assert!(
+        root.join(format!(
+            "neoforge/src/main/java/{}/vendor/gui/screen/ConfigScreen.java",
+            package_dir()
+        ))
+        .is_file()
+    );
     gradle_ok(&root, &["build"]);
     assert!(jar(&root, "neoforge").is_file());
+    assert_library_tests_passed(&root, "neoforge", COMMON_LIBRARY_TESTS);
 }
 
 /// The loader metadata follows `mod.toml`: the side, and each dependency for
@@ -185,9 +197,10 @@ type = "incompatible"
             side != "server",
             "{side}"
         );
-        assert!(
-            !entrypoints.contains_key("modmenu"),
-            "no Mod Menu entrypoint without the library"
+        assert_eq!(
+            entrypoints.contains_key("modmenu"),
+            side != "server",
+            "{side}: Mod Menu's entrypoint follows the library's client code"
         );
 
         let neoforge = neoforge_mods_toml(&root);
@@ -337,15 +350,16 @@ const COMMON_LIBRARY_TESTS: &[&str] = &[
     "network.SideCheckTest",
 ];
 
-/// The shared library compiles in a generated mod for both loaders, and its
+/// The shared library `mod init` lays out compiles for both loaders, and its
 /// tests pass there: unit tests, the server side of the sync on NeoForge
-/// with the game loaded, and a Fabric client gametest on a dedicated server.
-/// The client gametests need a display: Xvfb, as in CI.
+/// with the game loaded, and, copied by the test since no mod ships them, its
+/// Fabric client gametests on a dedicated server. The client gametests need a
+/// display: Xvfb, as in CI.
 #[test]
 #[ignore = "downloads Gradle, the loaders, Minecraft and JUnit, and starts the game"]
 fn library_tests_pass_in_a_generated_mod() {
     let (_tmp, root) = init("fabric,neoforge", "both-required");
-    library::copy(&root, "swift_blades", PACKAGE, "common");
+    library::copy_gametests(&root, PACKAGE);
     gradle_ok(&root, &["build", ":fabric:runClientGameTest"]);
     assert!(jar(&root, "fabric").is_file());
     assert!(jar(&root, "neoforge").is_file());
@@ -359,37 +373,212 @@ fn library_tests_pass_in_a_generated_mod() {
     );
 }
 
-/// A single-loader mod has no `common/`: the library goes into the loader's
-/// subproject, compiles and passes its tests there.
-#[test]
-#[ignore = "downloads Gradle, Fabric, Minecraft and JUnit"]
-fn library_tests_pass_in_a_single_loader_mod() {
-    let (_tmp, root) = init("fabric", "client");
-    library::copy(&root, "swift_blades", PACKAGE, "fabric");
-    gradle_ok(&root, &["build"]);
-    assert!(!root.join("common").exists());
-    assert!(!root.join("neoforge").exists());
-    assert!(jar(&root, "fabric").is_file());
-    assert_library_tests_passed(&root, "fabric", COMMON_LIBRARY_TESTS);
+fn read_json(path: &Path) -> serde_json::Map<String, serde_json::Value> {
+    let text = fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    serde_json::from_str(&text).unwrap()
 }
 
-/// A NeoForge-only mod has no client source set: the library's client code
-/// goes into `main`, next to the NeoForge config screen extension.
+/// Each loader's resources hold the mod's language file with the library's
+/// strings merged in under `<modid>.vendor.`; a key the mod defines itself
+/// wins, and a locale the library lacks is left as the mod wrote it.
 #[test]
-#[ignore = "downloads Gradle, NeoForge, Minecraft and JUnit"]
-fn library_tests_pass_in_a_neoforge_only_mod() {
-    let (_tmp, root) = init("neoforge", "both-required");
-    library::copy(&root, "swift_blades", PACKAGE, "neoforge");
-    assert!(
-        root.join(format!(
-            "neoforge/src/main/java/{}/vendor/gui/screen/ConfigScreen.java",
-            package_dir()
-        ))
-        .is_file()
+#[ignore = "downloads Gradle, the loaders and Minecraft"]
+fn the_language_file_merges_the_vendor_keys() {
+    let (_tmp, root) = init("fabric,neoforge", "both-required");
+    let lang = root.join("common/src/main/resources/assets/swift_blades/lang");
+    fs::create_dir_all(&lang).unwrap();
+    fs::write(
+        lang.join("en_us.json"),
+        r#"{"item.swift_blades.blade": "Swift Blade", "swift_blades.vendor.config.scope.server": "Rules"}"#,
+    )
+    .unwrap();
+    fs::write(
+        lang.join("fr_fr.json"),
+        r#"{"item.swift_blades.blade": "Lame"}"#,
+    )
+    .unwrap();
+    gradle_ok(
+        &root,
+        &[":fabric:processResources", ":neoforge:processResources"],
     );
-    gradle_ok(&root, &["build"]);
-    assert!(jar(&root, "neoforge").is_file());
-    assert_library_tests_passed(&root, "neoforge", COMMON_LIBRARY_TESTS);
+    for loader in ["fabric", "neoforge"] {
+        let built = root.join(format!(
+            "{loader}/build/resources/main/assets/swift_blades/lang"
+        ));
+        let en = read_json(&built.join("en_us.json"));
+        assert_eq!(en["item.swift_blades.blade"], "Swift Blade", "{loader}");
+        assert_eq!(
+            en["swift_blades.vendor.config.scope.client"], "Client",
+            "{loader}"
+        );
+        assert_eq!(
+            en["swift_blades.vendor.config.scope.server"], "Rules",
+            "{loader}"
+        );
+        assert!(en.keys().all(|k| !k.starts_with("config.")), "{en:?}");
+        let fr = read_json(&built.join("fr_fr.json"));
+        assert_eq!(fr.len(), 1, "{loader}: {fr:?}");
+    }
+    gradle_ok(&root, &[":fabric:jar", ":neoforge:jar"]);
+    assert_every_language_file_merged(&root);
+}
+
+/// A language file in common's client resources, where client assets often
+/// live: each jar holds it once, merged, and so does every resource folder
+/// a dev run loads the mod from.
+#[test]
+#[ignore = "downloads Gradle, the loaders and Minecraft"]
+fn a_client_language_file_merges_the_vendor_keys() {
+    let (_tmp, root) = init("fabric,neoforge", "both-required");
+    let lang = root.join("common/src/client/resources/assets/swift_blades/lang");
+    fs::create_dir_all(&lang).unwrap();
+    fs::write(
+        lang.join("en_us.json"),
+        r#"{"item.swift_blades.blade": "Swift Blade"}"#,
+    )
+    .unwrap();
+    gradle_ok(&root, &[":fabric:jar", ":neoforge:jar"]);
+    assert_every_language_file_merged(&root);
+}
+
+/// The mod's English file, in each jar and in every resource folder of the
+/// mod's subprojects, holds the vendor keys: a dev run loads the mod from all
+/// of these folders, and the first one holding the file wins.
+fn assert_every_language_file_merged(root: &Path) {
+    const EN: &str = "assets/swift_blades/lang/en_us.json";
+    for loader in ["fabric", "neoforge"] {
+        let path = jar(root, loader);
+        let mut archive = zip::ZipArchive::new(fs::File::open(&path).unwrap()).unwrap();
+        let copies = archive
+            .file_names()
+            .filter(|n| n.as_ref().unwrap() == EN)
+            .count();
+        assert_eq!(copies, 1, "{}: {EN}", path.display());
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut archive.by_name(EN).unwrap(), &mut text).unwrap();
+        let en: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&text).unwrap();
+        assert_eq!(en["item.swift_blades.blade"], "Swift Blade", "{loader}");
+        assert_eq!(
+            en["swift_blades.vendor.config.scope.client"], "Client",
+            "{loader}"
+        );
+    }
+    let mut found = 0;
+    for subproject in ["common", "fabric", "neoforge"] {
+        for set in ["main", "client"] {
+            let file = root.join(format!("{subproject}/build/resources/{set}/{EN}"));
+            if !file.is_file() {
+                continue;
+            }
+            found += 1;
+            let en = read_json(&file);
+            assert_eq!(
+                en["swift_blades.vendor.config.scope.client"],
+                "Client",
+                "{}",
+                file.display()
+            );
+        }
+    }
+    assert!(found > 0, "no resource folder holds {EN}");
+}
+
+/// Replaces the mod's `CommonEntrypoint` with one that builds a config schema
+/// through its copy of the library and prints the class it got.
+fn use_the_library(root: &Path, id: &str, package: &str) {
+    let path = root.join(format!(
+        "fabric/src/main/java/{}/CommonEntrypoint.java",
+        package.replace('.', "/")
+    ));
+    fs::write(
+        &path,
+        format!(
+            r#"package {package};
+
+import {package}.vendor.config.ConfigSchema;
+import {package}.vendor.config.ModSide;
+import {package}.vendor.config.Scope;
+import {package}.vendor.config.Setting;
+
+public final class CommonEntrypoint {{
+    public static final String MOD_ID = "{id}";
+
+    private CommonEntrypoint() {{}}
+
+    public static void init() {{
+        ConfigSchema.Builder config = ConfigSchema.builder(MOD_ID, ModSide.BOTH_REQUIRED);
+        config.define(Setting.integer("range", Scope.SERVER, 8, 1, 64));
+        ConfigSchema schema = config.build();
+        System.out.println("library of " + schema.modId() + ": " + ConfigSchema.class.getName());
+    }}
+}}
+"#
+        ),
+    )
+    .unwrap();
+}
+
+/// The entries of a jar, directories left out.
+fn jar_entries(path: &Path) -> std::collections::BTreeSet<String> {
+    let archive = zip::ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
+    archive
+        .file_names()
+        .map(|name| name.unwrap().into_owned())
+        .filter(|name| !name.ends_with('/'))
+        .collect()
+}
+
+/// Two mods carrying their own copy of the library share no class and no
+/// resource but their metadata, and load together in one Fabric run: the
+/// server gametests of one, with the other's jar added.
+#[test]
+#[ignore = "downloads Gradle, Fabric and Minecraft"]
+fn two_mods_with_the_library_load_together() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mods = [
+        ("swift_blades", PACKAGE),
+        ("frost_arrows", "com.payangar.frostarrows"),
+    ];
+    let roots: Vec<PathBuf> = mods
+        .iter()
+        .map(|(id, package)| {
+            let root = init_in(tmp.path(), id, package, id, "fabric", "both-required");
+            use_the_library(&root, id, package);
+            root
+        })
+        .collect();
+    let other = &roots[1];
+    gradle_ok(other, &[":fabric:jar"]);
+    let other_jar = other.join("fabric/build/libs/frost_arrows-fabric-0.0.0.jar");
+
+    let build = roots[0].join("fabric/build.gradle.kts");
+    let mut script = fs::read_to_string(&build).unwrap();
+    script.push_str(&format!(
+        r#"
+extensions.configure<net.fabricmc.loom.api.LoomGradleExtensionAPI> {{
+    runs.named("gameTest") {{ property("fabric.addMods", "{}") }}
+}}
+"#,
+        other_jar.display()
+    ));
+    fs::write(&build, script).unwrap();
+    let output = gradle(&roots[0], &[":fabric:jar", ":fabric:runGameTest"]);
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "the run with both mods failed");
+    for (id, package) in mods {
+        let line = format!("library of {id}: {package}.vendor.config.ConfigSchema");
+        assert!(log.contains(&line), "{line} missing from the run's log");
+    }
+
+    let shared: Vec<String> = jar_entries(&jar(&roots[0], "fabric"))
+        .intersection(&jar_entries(&other_jar))
+        .cloned()
+        .collect();
+    assert_eq!(shared, ["META-INF/MANIFEST.MF", "fabric.mod.json"]);
 }
 
 /// What a dry run of `publishMods` would send to `platform` for `loader`.

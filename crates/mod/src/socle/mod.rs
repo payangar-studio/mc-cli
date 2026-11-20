@@ -10,6 +10,8 @@
 //!   workflow;
 //! - `templates/blocks/`: blocks between markers in a file the mod owns
 //!   otherwise (`AGENTS.md`, `.gitignore`);
+//! - `templates/library/`: the shared library, copied under the mod's package
+//!   as socle files ([`library`]);
 //! - `templates/skeleton/`: the mod's own files, written once by `init` when
 //!   missing ([`skeleton`]): `mod.toml`, the subproject build scripts, the
 //!   entrypoints, the page. Their paths depend on the package, the loaders and
@@ -18,13 +20,14 @@
 //!
 //! Adding a file to `templates/socle/` needs no code change.
 
+pub mod library;
 pub mod skeleton;
 
 use std::path::Path;
 
 use include_dir::{Dir, include_dir};
-use mc_core::socle::Socle;
 use mc_core::socle::blocks::Markers;
+use mc_core::socle::{Socle, Template};
 
 use crate::context::SOCLE_DIR;
 use crate::error::{Context as _, Result};
@@ -57,6 +60,7 @@ pub static SOCLE: Socle = Socle {
     files: &FILES,
     blocks: &BLOCKS,
     project: &PROJECT,
+    laid_out,
     block_targets: &[
         ("agents.md", "AGENTS.md", HTML),
         ("gitignore", ".gitignore", HASH),
@@ -64,6 +68,12 @@ pub static SOCLE: Socle = Socle {
     html: HTML,
     hash: HASH,
 };
+
+/// The socle files laid out by code in the repository at `root`: the shared
+/// library, under the package of its `mod.toml`.
+fn laid_out(root: &Path) -> Result<Vec<Template>> {
+    library::files(&ModToml::load(root)?)
+}
 
 /// Checks the repository's socle version against the CLI's, at the start of
 /// every command that works in a repository, and enables the socle's git hooks
@@ -74,11 +84,11 @@ pub fn check_version(root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Socle files that already exist in `root` with other contents: those `init`
-/// would overwrite.
-pub fn overwritten(root: &Path) -> Result<Vec<String>> {
+/// Those of `files` that already exist in `root` with other contents: the
+/// socle files `init` would overwrite.
+pub fn overwritten(root: &Path, files: Vec<Template>) -> Result<Vec<String>> {
     let mut paths = Vec::new();
-    for template in SOCLE.socle_files() {
+    for template in files {
         let path = template
             .path
             .split('/')
@@ -88,7 +98,7 @@ pub fn overwritten(root: &Path) -> Result<Vec<String>> {
         }
         let same = path.is_file()
             && std::fs::read(&path).context(format!("reading {}", path.display()))?
-                == template.contents;
+                == *template.contents;
         if !same {
             paths.push(template.path);
         }

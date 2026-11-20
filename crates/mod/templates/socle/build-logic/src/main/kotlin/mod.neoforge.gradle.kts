@@ -75,6 +75,7 @@ sourceSets["main"].resources.srcDir(layout.buildDirectory.dir("generated/modMeta
 tasks.named<ProcessResources>("processResources") {
     dependsOn(generateModMetadata)
 }
+mergeVendorLang(mod.id, listOf("processResources"), home = "processResources")
 
 // The tests.
 

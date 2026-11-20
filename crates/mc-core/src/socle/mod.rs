@@ -12,12 +12,17 @@
 //! - `project`: the skeleton of the project's content, written once by
 //!   `init` when missing, never recorded, never touched again.
 //!
+//! A socle may also lay out files by code (`laid_out`), when their path or
+//! content depend on the repository: they are written, recorded and rewritten
+//! like `files`.
+//!
 //! Every socle also owns the files of [`SHARED`] (`templates/socle/` of this
 //! crate): the skills that serve every project type, such as the CurseForge
 //! page. They are written, recorded and rewritten with the socle's own files.
 
 pub mod blocks;
 
+use std::borrow::Cow;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Once;
@@ -61,6 +66,10 @@ pub struct Socle {
     pub blocks: &'static Dir<'static>,
     /// The skeleton of the project, written once by `init`.
     pub project: &'static Dir<'static>,
+    /// Socle files laid out by code from the repository at the given root,
+    /// which already holds the project's own files. Written, recorded and
+    /// rewritten like `files`.
+    pub laid_out: fn(&Path) -> Result<Vec<Template>>,
     /// Block templates: template file in `blocks`, target file in the
     /// repository, markers in the target's comment syntax.
     pub block_targets: &'static [(&'static str, &'static str, Markers)],
@@ -75,7 +84,7 @@ pub struct Socle {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Template {
     pub path: String,
-    pub contents: &'static [u8],
+    pub contents: Cow<'static, [u8]>,
 }
 
 /// A block to write in a file.
@@ -116,6 +125,22 @@ impl Socle {
             );
         }
         files
+    }
+
+    /// Every socle file of the repository at `root`: [`Socle::socle_files`]
+    /// and those laid out by code, sorted by path. A file laid out by code
+    /// never takes the path of a template.
+    pub fn files_in(&self, root: &Path) -> Result<Vec<Template>> {
+        let mut files = self.socle_files();
+        files.extend((self.laid_out)(root)?);
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        if let Some(pair) = files.windows(2).find(|w| w[0].path == w[1].path) {
+            panic!(
+                "{} is both a template and laid out by code in the {} socle",
+                pair[0].path, self.bin
+            );
+        }
+        Ok(files)
     }
 
     /// Every file of the project skeleton, sorted by path.
@@ -168,7 +193,7 @@ impl Socle {
         for template in self.project_files() {
             let path = under(root, &template.path);
             if !path.exists() {
-                write(&path, template.contents)?;
+                write(&path, &template.contents)?;
             }
         }
         self.write_socle(root)?.save(self, root)?;
@@ -184,10 +209,10 @@ impl Socle {
     /// was written.
     pub fn write_socle(&self, root: &Path) -> Result<SocleLock> {
         let mut lock = SocleLock::default();
-        for template in self.socle_files() {
-            write(&under(root, &template.path), template.contents)?;
+        for template in self.files_in(root)? {
+            write(&under(root, &template.path), &template.contents)?;
             lock.files.push(LockedFile {
-                sha256: sha256_bytes(template.contents),
+                sha256: sha256_bytes(&template.contents),
                 path: template.path,
                 kind: LockedKind::File,
             });
@@ -275,9 +300,10 @@ impl Socle {
     /// version, and prints what it did.
     ///
     /// 1. Compares the repository's socle version to the CLI's; stops when
-    ///    equal, unless `force`.
+    ///    equal and the files laid out by code have not moved, unless `force`.
     /// 2. Checks every file and block of the registry against its recorded
-    ///    hash; stops on hand edits unless `force`.
+    ///    hash, and every path the socle writes for the first time against
+    ///    the file already there; stops on hand edits unless `force`.
     /// 3. Writes the socle files and blocks, removes those that left the
     ///    socle.
     /// 4. Rewrites the registry and the version.
@@ -285,18 +311,8 @@ impl Socle {
         let mut config = SocleConfig::<I>::load(self, root)?;
         let cli = self.cli_version();
         let check = compare_versions(self, &config.version, &cli)?;
-        match check {
-            // `force` rewrites the socle at the same version: a file deleted
-            // or edited by hand, or a broken registry.
-            VersionCheck::Equal if !force => {
-                println!("The socle is already at version {cli}: nothing to update.");
-                return Ok(());
-            }
-            VersionCheck::Equal => {}
-            VersionCheck::RepoNewer { .. } => {
-                check.enforce(self)?;
-            }
-            VersionCheck::RepoOlder { .. } => {}
+        if let VersionCheck::RepoNewer { .. } = check {
+            check.enforce(self)?;
         }
 
         let old = match SocleLock::load(self, root) {
@@ -307,21 +323,43 @@ impl Socle {
             }
             Err(err) => return Err(err),
         };
+        let files = self.files_in(root)?;
+        // `force` rewrites the socle at the same version: a file deleted or
+        // edited by hand, or a broken registry. Without it, the same version
+        // still lays out again the files whose path or content follow the
+        // repository (a new package, other loaders).
+        if check == VersionCheck::Equal && !force && same_files(&old, &files) {
+            println!("The socle is already at version {cli}: nothing to update.");
+            return Ok(());
+        }
+
+        let mut blocked = Vec::new();
         let edited = self.edited_by_hand(root, &old)?;
         if !edited.is_empty() {
+            blocked.push(format!(
+                "socle files edited by hand since the socle wrote them:{}",
+                list(&edited)
+            ));
+        }
+        let taken = taken(root, &old, &files)?;
+        if !taken.is_empty() {
+            blocked.push(format!(
+                "files the socle now writes already exist with other contents:{}",
+                list(&taken)
+            ));
+        }
+        if !blocked.is_empty() {
+            let what = blocked.join("\n");
             if !force {
                 return Err(Error::blocked(
-                    format!(
-                        "socle files edited by hand since the socle wrote them:{}",
-                        list(&edited)
-                    ),
+                    what,
                     format!(
                         "move your changes out of these files, then rerun `{} update --force` to overwrite them",
                         self.bin
                     ),
                 ));
             }
-            tracing::warn!("overwriting socle files edited by hand:{}", list(&edited));
+            tracing::warn!("{what}\noverwriting them, as --force asks");
         }
 
         let new = self.write_socle(root)?;
@@ -335,9 +373,15 @@ impl Socle {
         let from = std::mem::replace(&mut config.version, cli.to_string());
         config.save(self, root)?;
 
-        println!("Updated the socle from {from} to {cli}.");
+        if from == cli.to_string() {
+            println!(
+                "Laid the socle out again at version {cli}, following the project's settings."
+            );
+        } else {
+            println!("Updated the socle from {from} to {cli}.");
+        }
         for path in removed {
-            println!("Removed {path}, no longer part of the socle.");
+            println!("Removed {path}: the socle no longer writes a file there.");
         }
         Ok(())
     }
@@ -357,6 +401,49 @@ impl Socle {
     }
 }
 
+/// Whether the files of the registry `lock` are exactly `files`, paths and
+/// contents.
+fn same_files(lock: &SocleLock, files: &[Template]) -> bool {
+    let mut locked: Vec<(&str, &str)> = lock
+        .files
+        .iter()
+        .filter(|f| f.kind == LockedKind::File)
+        .map(|f| (f.path.as_str(), f.sha256.as_str()))
+        .collect();
+    locked.sort();
+    let hashes: Vec<String> = files.iter().map(|t| sha256_bytes(&t.contents)).collect();
+    let mut written: Vec<(&str, &str)> = files
+        .iter()
+        .zip(&hashes)
+        .map(|(t, h)| (t.path.as_str(), h.as_str()))
+        .collect();
+    written.sort();
+    locked == written
+}
+
+/// Paths of `files` the registry `lock` does not hold, where the repository
+/// at `root` already has something else: the project's own files, which the
+/// socle would overwrite.
+fn taken(root: &Path, lock: &SocleLock, files: &[Template]) -> Result<Vec<String>> {
+    let mut taken = Vec::new();
+    for template in files {
+        if lock.files.iter().any(|f| f.path == template.path) {
+            continue;
+        }
+        let path = under(root, &template.path);
+        if path.symlink_metadata().is_err() {
+            continue;
+        }
+        let same = path.is_file()
+            && fs::read(&path).context(format!("reading {}", path.display()))?
+                == *template.contents;
+        if !same {
+            taken.push(template.path.clone());
+        }
+    }
+    Ok(taken)
+}
+
 fn list(paths: &[String]) -> String {
     paths.iter().map(|p| format!("\n  - {p}")).collect()
 }
@@ -372,7 +459,7 @@ fn files_of(dir: &'static Dir<'static>) -> Vec<Template> {
                 .join("/");
             out.push(Template {
                 path,
-                contents: file.contents(),
+                contents: Cow::Borrowed(file.contents()),
             });
         }
         for sub in dir.dirs() {
@@ -466,6 +553,7 @@ pub(crate) static TEST: Socle = {
         files: &EMPTY,
         blocks: &EMPTY,
         project: &EMPTY,
+        laid_out: |_| Ok(Vec::new()),
         block_targets: &[],
         html: Markers {
             begin: "<!-- test:begin -->",
@@ -491,7 +579,7 @@ mod tests {
             .iter()
             .find(|t| t.path == ".claude/skills/mc-curseforge-page/SKILL.md")
             .expect("the CurseForge page skill is shared");
-        let text = std::str::from_utf8(skill.contents).unwrap();
+        let text = std::str::from_utf8(&skill.contents).unwrap();
         assert!(text.starts_with("---\nname: mc-curseforge-page\ndescription: "));
         assert!(text.contains("Use when"));
         assert!(!text.contains('\u{2014}'));

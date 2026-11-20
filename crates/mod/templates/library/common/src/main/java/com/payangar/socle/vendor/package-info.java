@@ -1,8 +1,8 @@
 /**
  * The shared library of the mods, copied into each mod under {@code <package>.vendor}.
  *
- * <p>{@code com.payangar.socle.vendor} is the template package: the copy rewrites it, in
- * {@code package} and {@code import} lines and in paths, to the host mod's package. Several
+ * <p>In mc-cli's templates, this package is a template package: the copy rewrites its name to
+ * the host mod's {@code <package>.vendor}, in paths and wherever it appears in a file. Several
  * mods carry their own copy and run together, so the code here:
  *
  * <ul>

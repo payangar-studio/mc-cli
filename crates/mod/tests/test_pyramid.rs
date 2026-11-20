@@ -103,6 +103,60 @@ fn keep_runs(root: &Path, name: &str) {
     }
 }
 
+/// The JUnit tests of the shared library copied into `subproject` of a mod
+/// with both loaders: one per `@Test` annotation in the Java sources of its
+/// `src/test/java`.
+fn library_tests(subproject: &str) -> usize {
+    fn count(dir: &Path) -> usize {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return 0;
+        };
+        entries
+            .map(|e| e.unwrap().path())
+            .map(|path| {
+                if path.is_dir() {
+                    return count(&path);
+                }
+                if path.extension().is_none_or(|e| e != "java") {
+                    return 0;
+                }
+                let text = fs::read_to_string(&path).unwrap();
+                assert!(
+                    ["@ParameterizedTest", "@RepeatedTest", "@TestFactory"]
+                        .iter()
+                        .all(|a| !text.contains(a)),
+                    "{}: count its tests here",
+                    path.display()
+                );
+                text.lines().filter(|l| annotated_test(l)).count()
+            })
+            .sum()
+    }
+    count(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("templates/library")
+            .join(subproject)
+            .join("src/test/java"),
+    )
+}
+
+#[test]
+fn library_tests_are_counted_by_their_annotation() {
+    assert!(library_tests("common") > 0);
+    assert!(annotated_test("    @Test"));
+    assert!(annotated_test("@Test @Timeout(5)"));
+    assert!(!annotated_test("@TestInstance(Lifecycle.PER_CLASS)"));
+    assert!(!annotated_test("// @Test"));
+}
+
+/// Whether `line` starts with the `@Test` annotation, alone or followed by
+/// others (`@Test @Timeout(5)`).
+fn annotated_test(line: &str) -> bool {
+    line.trim_start()
+        .strip_prefix("@Test")
+        .is_some_and(|rest| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+}
+
 fn copy_dir(from: &Path, to: &Path) {
     fs::create_dir_all(to).unwrap();
     for entry in fs::read_dir(from).unwrap().map(|e| e.unwrap()) {
@@ -140,10 +194,10 @@ fn every_layer_passes() {
     );
     let log = log(&output);
     for (task, tests) in [
-        (":common:test", 1),
-        (":fabric:test", 1),
+        (":common:test", 1 + library_tests("common")),
+        (":fabric:test", 1 + library_tests("fabric")),
         (":fabric:runGameTest", 1),
-        (":neoforge:test", 2),
+        (":neoforge:test", 2 + library_tests("neoforge")),
         (":neoforge:runGameTestServer", 1),
     ] {
         assert!(
@@ -293,14 +347,14 @@ fn a_changed_render_fails_the_screenshot_test() {
 }
 
 /// The shared library's config screens on a Fabric client
-/// (`ConfigScreenClientGameTest`, copied with the library): the generated
+/// (`ConfigScreenClientGameTest`, which the test adds to the mod): the generated
 /// screen and the widget states match their reference renders, and settings
 /// changed with the mouse and the keyboard reach the JSON file.
 #[test]
 #[ignore = "downloads Gradle, the loaders and Minecraft, starts the game"]
 fn library_config_screens_pass_on_a_client() {
     let (_tmp, root) = init("fabric,neoforge", "both-required");
-    library::copy(&root, "swift_blades", "com.payangar.swiftblades", "common");
+    library::copy_gametests(&root, "com.payangar.swiftblades");
     let output = gradle(&root, &[":fabric:runClientGameTest"]);
     keep_runs(&root, "library_config_screens_pass_on_a_client");
     assert!(

@@ -9,7 +9,7 @@ use assert_cmd::Command;
 use mc_mod::model::mod_toml::{Loader, ModToml, Side};
 use mc_mod::model::socle::{LockedFile, LockedKind, SocleConfig, SocleLock};
 use mc_mod::model::{sha256_bytes, sha256_file};
-use mc_mod::socle::SOCLE;
+use mc_mod::socle::{SOCLE, library};
 use predicates::prelude::*;
 
 const INIT_ARGS: &[&str] = &[
@@ -90,7 +90,9 @@ fn init_creates_a_complete_repository() {
     let lock = SocleLock::load(&SOCLE, &root).unwrap();
     assert_eq!(
         lock.files.len(),
-        SOCLE.socle_files().len() + SOCLE.socle_blocks().len()
+        SOCLE.socle_files().len()
+            + SOCLE.socle_blocks().len()
+            + library::files(&module).unwrap().len()
     );
     assert!(SOCLE.edited_by_hand(&root, &lock).unwrap().is_empty());
     // The mod's own files are not the socle's.
@@ -375,12 +377,239 @@ fn update_keeps_the_mods_own_files() {
     let entrypoint =
         root.join("common/src/main/java/com/payangar/swiftblades/CommonEntrypoint.java");
     fs::write(&entrypoint, "// mine\n").unwrap();
-    fs::write(root.join("mod.toml"), "# mine\n").unwrap();
+    let module = format!(
+        "{}# mine\n",
+        fs::read_to_string(root.join("mod.toml")).unwrap()
+    );
+    fs::write(root.join("mod.toml"), &module).unwrap();
     make_older(&root);
     bin(&root).arg("update").assert().success();
     assert_eq!(fs::read_to_string(&entrypoint).unwrap(), "// mine\n");
+    assert_eq!(fs::read_to_string(root.join("mod.toml")).unwrap(), module);
+}
+
+const VENDOR: &str = "common/src/main/java/com/payangar/swiftblades/vendor";
+
+/// The shared library is copied under the mod's own package, rewritten, and
+/// recorded in the registry like every socle file.
+#[test]
+fn init_copies_the_library_under_the_mod_package() {
+    let (_tmp, root) = init_repo();
+    let schema = fs::read_to_string(root.join(VENDOR).join("config/ConfigSchema.java")).unwrap();
+    assert!(schema.starts_with("package com.payangar.swiftblades.vendor.config;\n"));
+    assert!(!schema.contains(library::TEMPLATE_PACKAGE));
+    let test = root
+        .join("common/src/test/java/com/payangar/swiftblades/vendor/config/ConfigSchemaTest.java");
+    assert!(test.is_file(), "the library's tests are copied with it");
+    assert!(root.join(library::LANG_DIR).join("en_us.json").is_file());
+    assert!(
+        !root
+            .join("common/src/main/java/com/payangar/socle")
+            .exists()
+    );
+
+    let lock = SocleLock::load(&SOCLE, &root).unwrap();
+    let schema_path = format!("{VENDOR}/config/ConfigSchema.java");
+    let entry = lock.files.iter().find(|f| f.path == schema_path).unwrap();
+    assert_eq!(entry.sha256, sha256_bytes(schema.as_bytes()));
+}
+
+#[test]
+fn update_refuses_a_hand_edited_vendor_file_and_force_restores_it() {
+    let (_tmp, root) = init_repo();
+    let path = root.join(VENDOR).join("config/Scope.java");
+    let original = fs::read_to_string(&path).unwrap();
+    fs::write(&path, format!("{original}// mine\n")).unwrap();
+    make_older(&root);
+
+    bin(&root)
+        .arg("update")
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("edited by hand"))
+        .stderr(predicate::str::contains(format!(
+            "{VENDOR}/config/Scope.java"
+        )))
+        .stderr(predicate::str::contains("mod update --force"));
+    assert!(fs::read_to_string(&path).unwrap().ends_with("// mine\n"));
+
+    bin(&root).args(["update", "--force"]).assert().success();
+    assert_eq!(fs::read_to_string(&path).unwrap(), original);
+}
+
+/// The library follows `mod.toml`: a new package moves it, and the copy under
+/// the old one is removed.
+#[test]
+fn update_moves_the_library_with_the_package() {
+    let (_tmp, root) = init_repo();
+    let text = fs::read_to_string(root.join("mod.toml")).unwrap();
+    fs::write(
+        root.join("mod.toml"),
+        text.replace("com.payangar.swiftblades", "com.payangar.blades"),
+    )
+    .unwrap();
+    make_older(&root);
+    bin(&root).arg("update").assert().success();
+
+    let moved = root.join("common/src/main/java/com/payangar/blades/vendor/config/Scope.java");
+    assert!(
+        fs::read_to_string(&moved)
+            .unwrap()
+            .starts_with("package com.payangar.blades.vendor.config;")
+    );
+    assert!(!root.join(VENDOR).exists());
+    let lock = SocleLock::load(&SOCLE, &root).unwrap();
+    assert!(SOCLE.edited_by_hand(&root, &lock).unwrap().is_empty());
+}
+
+/// `update` lays the library out from `mod.toml`: one it cannot read stops it
+/// before any file is written.
+#[test]
+fn update_refuses_an_invalid_mod_toml() {
+    let (_tmp, root) = init_repo();
+    fs::write(root.join("mod.toml"), "# mine\n").unwrap();
+    make_older(&root);
+    let lock = fs::read_to_string(root.join(".mod/socle.lock")).unwrap();
+    bin(&root)
+        .arg("update")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("mod.toml"));
     assert_eq!(
-        fs::read_to_string(root.join("mod.toml")).unwrap(),
-        "# mine\n"
+        fs::read_to_string(root.join(".mod/socle.lock")).unwrap(),
+        lock
+    );
+}
+
+/// `INIT_ARGS` with `--package=<package>`.
+fn init_args_with_package(package: &str) -> Vec<String> {
+    INIT_ARGS
+        .iter()
+        .map(|a| {
+            if a.starts_with("--package=") {
+                format!("--package={package}")
+            } else {
+                a.to_string()
+            }
+        })
+        .collect()
+}
+
+/// An init that resumes keeps the `mod.toml` already there, and lays the
+/// library out from it: the overwrite check covers that library, whatever
+/// package the command line gives.
+#[test]
+fn init_checks_the_library_of_the_kept_mod_toml() {
+    let (_tmp, root) = init_repo();
+    fs::remove_file(root.join(".mod/socle.toml")).unwrap();
+    let path = root.join(VENDOR).join("config/Scope.java");
+    fs::write(&path, "// mine\n").unwrap();
+
+    bin(&root)
+        .arg("init")
+        .args(init_args_with_package("com.payangar.blades"))
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(format!(
+            "{VENDOR}/config/Scope.java"
+        )))
+        .stderr(predicate::str::contains("--force"));
+    assert_eq!(fs::read_to_string(&path).unwrap(), "// mine\n");
+}
+
+/// A kept `mod.toml` that cannot be read stops init before it writes anything.
+#[test]
+fn init_refuses_an_invalid_kept_mod_toml_before_writing() {
+    let (_tmp, root) = init_repo();
+    fs::remove_file(root.join(".mod/socle.toml")).unwrap();
+    fs::write(root.join("mod.toml"), "# mine\n").unwrap();
+    let entrypoint =
+        root.join("common/src/main/java/com/payangar/swiftblades/CommonEntrypoint.java");
+    fs::remove_file(&entrypoint).unwrap();
+
+    bin(&root)
+        .arg("init")
+        .args(INIT_ARGS)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("mod.toml"));
+    assert!(
+        !entrypoint.exists(),
+        "init wrote the skeleton before failing"
+    );
+    assert!(!root.join(".mod/socle.toml").exists());
+}
+
+/// Files the socle owns are checked before any question: without a terminal,
+/// the conflict is reported, not the first missing argument.
+#[test]
+fn init_reports_existing_build_files_before_asking() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("swift-blades");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("gradle.properties"), "mod_version=1.4.2\n").unwrap();
+    bin(tmp.path())
+        .args(["init", "swift-blades"])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("gradle.properties"));
+}
+
+/// The library's layout follows `mod.toml`: at the same socle version, a new
+/// package still moves it.
+#[test]
+fn update_moves_the_library_with_the_package_at_the_same_version() {
+    let (_tmp, root) = init_repo();
+    let text = fs::read_to_string(root.join("mod.toml")).unwrap();
+    fs::write(
+        root.join("mod.toml"),
+        text.replace("com.payangar.swiftblades", "com.payangar.blades"),
+    )
+    .unwrap();
+    bin(&root)
+        .arg("update")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("nothing to update").not());
+
+    let moved = root.join("common/src/main/java/com/payangar/blades/vendor/config/Scope.java");
+    assert!(moved.is_file());
+    assert!(!root.join(VENDOR).exists());
+    let lock = SocleLock::load(&SOCLE, &root).unwrap();
+    assert!(SOCLE.edited_by_hand(&root, &lock).unwrap().is_empty());
+}
+
+/// A path the socle writes for the first time is the project's until then: a
+/// file already there with other contents stops `update` unless forced.
+#[test]
+fn update_refuses_to_overwrite_a_file_at_a_new_socle_path() {
+    let (_tmp, root) = init_repo();
+    let text = fs::read_to_string(root.join("mod.toml")).unwrap();
+    fs::write(
+        root.join("mod.toml"),
+        text.replace("com.payangar.swiftblades", "com.payangar.blades"),
+    )
+    .unwrap();
+    let mine = root.join("common/src/main/java/com/payangar/blades/vendor/config/Scope.java");
+    fs::create_dir_all(mine.parent().unwrap()).unwrap();
+    fs::write(&mine, "// mine\n").unwrap();
+    make_older(&root);
+
+    bin(&root)
+        .arg("update")
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "common/src/main/java/com/payangar/blades/vendor/config/Scope.java",
+        ))
+        .stderr(predicate::str::contains("mod update --force"));
+    assert_eq!(fs::read_to_string(&mine).unwrap(), "// mine\n");
+    assert!(root.join(VENDOR).exists(), "nothing moved");
+
+    bin(&root).args(["update", "--force"]).assert().success();
+    assert!(
+        fs::read_to_string(&mine)
+            .unwrap()
+            .starts_with("package com.payangar.blades.vendor.config;")
     );
 }

@@ -5,12 +5,14 @@ use std::process::Command;
 
 use mc_core::machine_config::{IdentityField, MachineIdentity};
 use mc_core::project::{Project, ProjectType};
+use mc_core::socle::Template;
 
 use crate::context::{Context, SOCLE_DIR};
 use crate::error::{Context as _, Error, Result};
 use crate::model::mod_toml::{
     self, Dependency, Loader, ModToml, Side, check_id, check_package, default_package,
 };
+use crate::socle::{SOCLE, library};
 use crate::versions;
 
 /// Loader sets offered in a terminal, as `--loaders` takes them.
@@ -70,20 +72,19 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
             "move it away, or pick another directory",
         ));
     }
-    let overwritten = crate::socle::overwritten(&dir)?;
-    if !overwritten.is_empty() {
-        let list: String = overwritten.iter().map(|p| format!("\n  - {p}")).collect();
-        if !args.force {
-            return Err(Error::blocked(
-                format!(
-                    "files the socle owns already exist in {}:{list}",
-                    dir.display()
-                ),
-                "move your changes out of these files, then rerun `mod init --force` to overwrite them",
-            ));
-        }
-        tracing::warn!("overwriting files the socle owns:{list}");
+    // An init that resumes keeps the `mod.toml` already there, and the
+    // library is laid out from it. Without one, the library's paths are known
+    // once the questions are answered.
+    let kept = if dir.join(mod_toml::FILE_NAME).exists() {
+        Some(ModToml::load(&dir)?)
+    } else {
+        None
+    };
+    let mut files = SOCLE.socle_files();
+    if let Some(kept) = &kept {
+        files.extend(library::files(kept)?);
     }
+    refuse_overwrite(&dir, files, args.force)?;
 
     let p = &ctx.prompt;
     let id = p.text(args.id, "--id", "Mod id")?;
@@ -145,6 +146,10 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
         loaders,
         license,
     };
+    if kept.is_none() {
+        refuse_overwrite(&dir, library::files(&module)?, args.force)?;
+    }
+
     std::fs::create_dir_all(&dir).context(format!("creating {}", dir.display()))?;
     git_init(&dir, &minecraft)?;
     crate::socle::init(&dir, &module, pinned.versions())?;
@@ -158,6 +163,27 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
     println!(
         "Once the repository is on GitHub, run `mod setup` to protect its release tags and set its vault variables."
     );
+    Ok(())
+}
+
+/// Refuses to overwrite those of `files` that already exist in `dir` with
+/// other contents, unless `force`.
+fn refuse_overwrite(dir: &Path, files: Vec<Template>, force: bool) -> Result<()> {
+    let overwritten = crate::socle::overwritten(dir, files)?;
+    if overwritten.is_empty() {
+        return Ok(());
+    }
+    let list: String = overwritten.iter().map(|p| format!("\n  - {p}")).collect();
+    if !force {
+        return Err(Error::blocked(
+            format!(
+                "files the socle owns already exist in {}:{list}",
+                dir.display()
+            ),
+            "move your changes out of these files, then rerun `mod init --force` to overwrite them",
+        ));
+    }
+    tracing::warn!("overwriting files the socle owns:{list}");
     Ok(())
 }
 

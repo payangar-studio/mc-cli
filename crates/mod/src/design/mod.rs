@@ -36,15 +36,15 @@ pub fn files(module: &ModToml) -> Vec<File> {
     vec![
         File {
             path: "docs/.nojekyll".into(),
-            contents: String::new(),
+            contents: Vec::new(),
         },
         File {
             path: PAGE.into(),
-            contents: fill(include_str!("../../templates/design/index.html"), &values),
+            contents: fill(include_str!("../../templates/design/index.html"), &values).into(),
         },
         File {
             path: "docs/design/00-overview.md".into(),
-            contents: fill(include_str!("../../templates/design/overview.md"), &values),
+            contents: fill(include_str!("../../templates/design/overview.md"), &values).into(),
         },
     ]
 }
@@ -112,7 +112,7 @@ fn write_tree(root: &Path, files: &[File]) -> Result<String> {
         let blob = git(
             root,
             &["hash-object", "-w", "--stdin"],
-            Some(file.contents.as_bytes()),
+            Some(&file.contents),
         )?;
         let mut parts: Vec<&str> = file.path.split('/').collect();
         let name = parts.pop().expect("a path has a file name");
@@ -195,6 +195,10 @@ mod tests {
     use super::*;
     use crate::model::mod_toml::{Loader, Side};
 
+    fn text(bytes: &[u8]) -> &str {
+        std::str::from_utf8(bytes).expect("the design files are text")
+    }
+
     fn module(name: &str) -> ModToml {
         ModToml {
             id: "swift_blades".into(),
@@ -221,12 +225,12 @@ mod tests {
         );
         for file in &files {
             assert!(
-                !file.contents.contains("{{"),
+                !text(&file.contents).contains("{{"),
                 "{} keeps a placeholder",
                 file.path
             );
         }
-        let overview = &files[2].contents;
+        let overview = text(&files[2].contents);
         assert!(overview.starts_with("# Swift Blades: design\n"));
         assert!(overview.contains("`both-optional`"));
     }
@@ -234,7 +238,7 @@ mod tests {
     #[test]
     fn the_name_is_escaped_in_the_page() {
         let files = files(&module("<Blades> & \"Co\""));
-        let page = &files[1].contents;
+        let page = text(&files[1].contents);
         assert!(page.contains("<h1>&lt;Blades&gt; &amp; &quot;Co&quot;</h1>"));
         assert!(!page.contains("<Blades>"));
     }

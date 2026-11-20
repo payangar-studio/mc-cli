@@ -1,5 +1,6 @@
-//! `mod setup`: configures the GitHub repository of the mod, once it exists:
-//! the ruleset of the release tags, the vault variables, `CODEOWNERS`
+//! `mod setup`: configures the GitHub repository of the mod, once it exists
+//! and its version branch is pushed: the ruleset of the release tags, the
+//! vault variables, `CODEOWNERS`, the default branch and the design page
 //! ([`crate::github`]).
 
 use std::path::Path;

@@ -8,7 +8,7 @@ use mc_core::project::{Project, ProjectType};
 use mc_core::socle::Template;
 
 use crate::context::{Context, SOCLE_DIR};
-use crate::design::{self, pages, pages::Published};
+use crate::design;
 use crate::error::{Context as _, Error, Result};
 use crate::model::mod_toml::{
     self, Dependency, Loader, ModToml, Side, check_id, check_package, default_package,
@@ -164,9 +164,6 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
         "Review {}, then build with `./gradlew build`.",
         mod_toml::FILE_NAME
     );
-    println!(
-        "Once the repository is on GitHub, run `mod setup` to protect its release tags and set its vault variables."
-    );
     match branch {
         design::Branch::Created => println!(
             "Created the `{}` branch: the design of the mod, built into a page by the `mod-design` skill.",
@@ -174,7 +171,10 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
         ),
         design::Branch::Exists => println!("Kept the existing `{}` branch.", design::BRANCH),
     }
-    publish_design(&dir);
+    println!(
+        "Once the repository is on GitHub and the {minecraft} branch is pushed, run `mod setup`: it protects the release tags, sets the vault variables, makes {minecraft} the default branch, pushes `{}` and publishes it with GitHub Pages.",
+        design::BRANCH
+    );
     Ok(())
 }
 
@@ -197,30 +197,6 @@ fn refuse_overwrite(dir: &Path, files: Vec<Template>, force: bool) -> Result<()>
     }
     tracing::warn!("overwriting files the socle owns:{list}");
     Ok(())
-}
-
-/// Publishes the design page through GitHub Pages when the GitHub repository
-/// exists. A failure only warns: the mod is created.
-fn publish_design(dir: &Path) {
-    let later = format!(
-        "Once the repository is on GitHub, push the `{branch}` branch and set GitHub Pages to it, folder `{folder}`:\n  git push origin {branch}\n  gh api --method POST repos/OWNER/REPO/pages -f build_type=legacy -f 'source[branch]={branch}' -f 'source[path]={folder}'",
-        branch = design::BRANCH,
-        folder = pages::FOLDER,
-    );
-    match pages::publish(dir) {
-        Ok(Published::Configured { url }) => {
-            println!("Design page: {url} (GitHub Pages builds it within a few minutes)")
-        }
-        Ok(Published::NoGitHubRemote) => println!("{later}"),
-        Ok(Published::Unreachable { repo, reason }) => {
-            tracing::warn!("could not reach the GitHub repository {repo}: {reason}");
-            println!("{later}");
-        }
-        Err(e) => tracing::warn!(
-            "GitHub Pages is not set up: {}",
-            e.to_string().trim_start_matches("error: ")
-        ),
-    }
 }
 
 /// Refuses an empty value of `arg`, which the build would refuse later.

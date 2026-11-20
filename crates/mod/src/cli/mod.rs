@@ -46,7 +46,7 @@ pub enum Command {
     Init(init::Args),
     /// Bring the repository's socle to this CLI's version
     Update(update::Args),
-    /// Configure the mod's GitHub repository: ruleset of the release tags, vault variables, CODEOWNERS
+    /// Configure the mod's GitHub repository: ruleset of the release tags, vault variables, CODEOWNERS, default branch, design page
     Setup(setup::Args),
     /// Port the mod to another Minecraft version, on a new branch named after it
     Port(port::Args),

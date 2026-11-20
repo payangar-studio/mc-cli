@@ -105,3 +105,6 @@ self-contained.
    then what is unclear, too long or badly displayed. It changes nothing;
    you decide what to fix.
 6. Commit on `design` and push it. Pages publishes the page within minutes.
+   When `origin` has no `design` branch yet, do not push it: on an empty
+   repository it would become the default branch. `mod setup` pushes it once
+   the version branch is there, and sets Pages.

@@ -1,12 +1,14 @@
 //! The `design` branch of a mod: an orphan branch that does not follow the
 //! code, with the design as Markdown documents for agents (`docs/design/*.md`)
 //! and as a self-contained page for people (`docs/design/index.html`), which
-//! GitHub Pages serves from `/docs` ([`pages`]). `docs/.nojekyll` makes Pages
-//! serve the files as they are.
+//! GitHub Pages serves from `/docs`. `docs/.nojekyll` makes Pages serve the
+//! files as they are.
 //!
 //! `mod init` writes the branch with git plumbing (blobs, trees, one commit,
 //! the ref), so the working tree, the index and the current branch are left
-//! alone. The `mod-design` skill builds the page from the documents.
+//! alone. It stays local: `mod setup` pushes it and sets Pages once the
+//! version branch is on GitHub ([`pages`]). The `mod-design` skill builds the
+//! page from the documents.
 
 pub mod pages;
 

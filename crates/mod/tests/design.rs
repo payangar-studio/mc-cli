@@ -1,9 +1,6 @@
-//! The `design` branch `mod init` creates, its publication by GitHub Pages
-//! (against a fake `gh` and a local remote), and the `mod-design` skill with
-//! the check of its output.
-
-#[path = "../../modpack/tests/common/mod.rs"]
-mod common;
+//! The `design` branch `mod init` creates and keeps local (`mod setup`
+//! publishes it, see `crates/mod/src/github/tests.rs`), and the `mod-design`
+//! skill with the check of its output.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -164,34 +161,10 @@ fn init_without_a_git_identity_stops_before_the_socle() {
     git(tmp.path(), &["rev-parse", "--verify", "design"]);
 }
 
+/// On an empty GitHub repository the first branch pushed becomes the
+/// default: init pushes nothing, and leaves the publication to `mod setup`.
 #[test]
-fn init_without_a_github_remote_says_how_to_publish_later() {
-    let tmp = tempfile::tempdir().unwrap();
-    bin(tmp.path())
-        .arg("init")
-        .args(INIT_ARGS)
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("git push origin design"))
-        .stdout(predicate::str::contains(
-            "gh api --method POST repos/OWNER/REPO/pages",
-        ));
-}
-
-/// `gh` answering 404 to the read of the site, and the site to its creation;
-/// every call is logged to `gh.log` next to it.
-const FAKE_GH: &str = r#"#!/bin/sh
-echo "$*" >> "$(dirname "$0")/gh.log"
-case "$*" in
-  *"--method POST"*) echo "legacy design /docs https://payangar-studio.github.io/swift-blades/" ;;
-  *) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
-esac
-"#;
-
-/// With a GitHub `origin` (rewritten by git to a local bare repository), init
-/// pushes the branch and creates the Pages site from it.
-#[test]
-fn init_publishes_the_design_branch_with_pages() {
+fn init_leaves_the_remote_alone() {
     let tmp = tempfile::tempdir().unwrap();
     let bare = tmp.path().join("remote.git");
     let root = tmp.path().join("swift-blades");
@@ -211,36 +184,18 @@ fn init_publishes_the_design_branch_with_pages() {
             github,
         ],
     );
-    let fakes = tmp.path().join("bin");
-    fs::create_dir_all(&fakes).unwrap();
-    common::write_executable(&fakes.join("gh"), FAKE_GH);
-    let path = std::env::join_paths(std::iter::once(fakes.clone()).chain(std::env::split_paths(
-        &std::env::var_os("PATH").unwrap_or_default(),
-    )))
-    .unwrap();
 
     bin(&root)
-        .env("PATH", path)
         .arg("init")
         .args(INIT_ARGS)
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "Design page: https://payangar-studio.github.io/swift-blades/design/",
+            "the 26.3 branch is pushed, run `mod setup`",
         ));
 
-    assert_eq!(
-        git(&bare, &["rev-parse", "design"]),
-        git(&root, &["rev-parse", "design"])
-    );
-    let log = fs::read_to_string(fakes.join("gh.log")).unwrap();
-    let calls: Vec<_> = log.lines().collect();
-    assert_eq!(calls.len(), 2, "{log}");
-    assert!(calls[0].starts_with("api repos/payangar-studio/swift-blades/pages"));
-    assert!(calls[1].starts_with("api --method POST repos/payangar-studio/swift-blades/pages"));
-    for field in ["source[branch]=design", "source[path]=/docs"] {
-        assert!(calls[1].contains(field), "{field} missing: {log}");
-    }
+    git(&root, &["rev-parse", "--verify", "design"]);
+    assert_eq!(git(&bare, &["for-each-ref"]), "");
 }
 
 #[test]

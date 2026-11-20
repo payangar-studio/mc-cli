@@ -1,7 +1,8 @@
 //! The GitHub repository of a mod, configured through the REST API by
 //! `mod setup`: the ruleset that reserves the release tags, the repository
-//! variables the publish workflow reads to reach the vault, and the
-//! `CODEOWNERS` file that covers the workflows.
+//! variables the publish workflow reads to reach the vault, the `CODEOWNERS`
+//! file that covers the workflows, the default branch (the newest Minecraft
+//! version) and GitHub Pages of the `design` branch.
 
 use std::path::Path;
 use std::time::Duration;
@@ -9,6 +10,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use ureq::Agent;
 
+use crate::design::{self, pages};
 use crate::error::{Context as _, Error, Result};
 
 /// The public API.
@@ -84,11 +86,12 @@ impl Repo {
 }
 
 /// What GitHub says of a repository, as far as setup needs it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoInfo {
     pub private: bool,
     /// Owned by an organization, rather than a user.
     pub organization: bool,
+    pub default_branch: String,
 }
 
 /// What became of the ruleset of the release tags.
@@ -98,6 +101,17 @@ pub enum Protection {
     /// It existed: it was left as it is, with what an admin changed in it.
     Kept,
     /// GitHub refuses rulesets on this private repository without a paid plan.
+    NeedsPlan,
+}
+
+/// What became of GitHub Pages of the `design` branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Pages {
+    /// The site was created, or moved from another source; its URL.
+    Set(String),
+    /// It already published `design` from `/docs`; its URL.
+    Kept(String),
+    /// GitHub refuses Pages on this private repository without a paid plan.
     NeedsPlan,
 }
 
@@ -182,6 +196,7 @@ impl GitHub {
             200 => Ok(Some(RepoInfo {
                 private: value["private"].as_bool().unwrap_or(true),
                 organization: value["owner"]["type"].as_str() == Some("Organization"),
+                default_branch: value["default_branch"].as_str().unwrap_or("").to_owned(),
             })),
             _ => Err(unexpected("GET", &path, status, &value)),
         }
@@ -227,7 +242,7 @@ impl GitHub {
 
     /// Creates the ruleset [`RULESET`] unless the repository has its own
     /// ruleset of that name, which is left alone.
-    pub fn protect_release_tags(&self, repo: &Repo, info: RepoInfo) -> Result<Protection> {
+    pub fn protect_release_tags(&self, repo: &Repo, info: &RepoInfo) -> Result<Protection> {
         let path = format!("/repos/{repo}/rulesets");
         let list = format!("{path}?includes_parents=false&per_page=100");
         let (status, value) = self.send("GET", &list, None)?;
@@ -257,6 +272,60 @@ impl GitHub {
     }
 }
 
+impl GitHub {
+    /// Makes `branch` the default branch of `repo`.
+    pub fn set_default_branch(&self, repo: &Repo, branch: &str) -> Result<()> {
+        let path = format!("/repos/{repo}");
+        let body = json!({ "default_branch": branch });
+        let (status, answer) = self.call("PATCH", &path, Some(&body))?;
+        match status {
+            200 => Ok(()),
+            _ => Err(unexpected("PATCH", &path, status, &answer)),
+        }
+    }
+
+    /// Sets Pages of `repo` to publish the `design` branch from `/docs`:
+    /// creates the site when there is none, changes its source when it
+    /// differs.
+    pub fn publish_design(&self, repo: &Repo, info: &RepoInfo) -> Result<Pages> {
+        let path = format!("/repos/{repo}/pages");
+        let body = json!({
+            "build_type": "legacy",
+            "source": { "branch": design::BRANCH, "path": pages::FOLDER },
+        });
+        let (status, site) = self.call("GET", &path, None)?;
+        match status {
+            200 => {
+                let url = site["html_url"].as_str().unwrap_or_default().to_owned();
+                if site["build_type"] == "legacy"
+                    && site["source"]["branch"] == design::BRANCH
+                    && site["source"]["path"] == pages::FOLDER
+                {
+                    return Ok(Pages::Kept(url));
+                }
+                let (status, answer) = self.call("PUT", &path, Some(&body))?;
+                match status {
+                    204 | 200 => Ok(Pages::Set(url)),
+                    _ => Err(unexpected("PUT", &path, status, &answer)),
+                }
+            }
+            404 => {
+                let (status, answer) = self.call("POST", &path, Some(&body))?;
+                match status {
+                    201 | 200 => Ok(Pages::Set(
+                        answer["html_url"].as_str().unwrap_or_default().to_owned(),
+                    )),
+                    // "Your current plan does not support GitHub Pages for
+                    // this repository."
+                    422 if info.private => Ok(Pages::NeedsPlan),
+                    _ => Err(unexpected("POST", &path, status, &answer)),
+                }
+            }
+            _ => Err(unexpected("GET", &path, status, &site)),
+        }
+    }
+}
+
 /// Configures `repo` for the mod at `root` and returns what it did, one line
 /// each. Missing on GitHub, the repository is left alone.
 ///
@@ -266,6 +335,10 @@ impl GitHub {
 /// - The ruleset of the release tags is created, or kept when it exists. A
 ///   private repository without a paid plan is skipped: GitHub refuses it.
 /// - `CODEOWNERS` names the token's account, unless GitHub already has one.
+/// - The newest Minecraft version branch becomes the default branch. It must
+///   be on `origin` already: setup refuses before any change otherwise.
+/// - The `design` branch is pushed when `origin` lacks it, and Pages publishes
+///   it from `/docs`. A private repository without a paid plan is skipped.
 pub fn configure(
     gh: &GitHub,
     repo: &Repo,
@@ -280,6 +353,7 @@ pub fn configure(
         ));
         return Ok(done);
     };
+    let remote = pages::read(root)?;
     let mut values = Vec::new();
     for ((name, question), value) in VARIABLES.into_iter().zip(given) {
         let value = match value {
@@ -309,7 +383,7 @@ pub fn configure(
             None => done.push(format!("Kept the variable {name}.")),
         }
     }
-    match gh.protect_release_tags(repo, info)? {
+    match gh.protect_release_tags(repo, &info)? {
         Protection::Created => done.push(format!("Created the ruleset `{RULESET}`.")),
         Protection::Kept => done.push(format!("Kept the ruleset `{RULESET}`.")),
         Protection::NeedsPlan => {
@@ -330,7 +404,59 @@ pub fn configure(
             "Wrote {CODEOWNERS} with @{login} as the owner of the workflows: commit it."
         ));
     }
+    publish_design(gh, repo, &info, root, &remote, &mut done)?;
     Ok(done)
+}
+
+/// The default branch, then the `design` branch and its page.
+fn publish_design(
+    gh: &GitHub,
+    repo: &Repo,
+    info: &RepoInfo,
+    root: &Path,
+    remote: &pages::Remote,
+    done: &mut Vec<String>,
+) -> Result<()> {
+    let version = &remote.version;
+    if info.default_branch == *version {
+        done.push(format!("Kept the default branch {version}."));
+    } else {
+        gh.set_default_branch(repo, version)?;
+        done.push(format!("Set the default branch to {version}."));
+    }
+    let branch = design::BRANCH;
+    match remote.design {
+        pages::Design::OnRemote => {}
+        pages::Design::Local => {
+            pages::push(root)?;
+            done.push(format!("Pushed the `{branch}` branch."));
+        }
+        pages::Design::Missing => {
+            done.push(format!(
+                "Skipped GitHub Pages: no `{branch}` branch here or on origin."
+            ));
+            return Ok(());
+        }
+    }
+    let folder = pages::FOLDER;
+    let page = |url: &str| format!("{}/design/", url.trim_end_matches('/'));
+    done.push(match gh.publish_design(repo, info)? {
+        Pages::Set(url) => format!(
+            "Set GitHub Pages to the `{branch}` branch, folder `{folder}`: {} (built within a few minutes).",
+            page(&url)
+        ),
+        Pages::Kept(url) => format!(
+            "Kept GitHub Pages on the `{branch}` branch, folder `{folder}`: {}",
+            page(&url)
+        ),
+        Pages::NeedsPlan => {
+            tracing::warn!(
+                "{repo} is private: GitHub needs a paid plan for Pages there, the design page is not published"
+            );
+            "Skipped GitHub Pages: GitHub needs a paid plan for Pages on this private repository.".into()
+        }
+    });
+    Ok(())
 }
 
 /// The ruleset that reserves the creation, update and deletion of `v*` tags

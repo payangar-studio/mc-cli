@@ -119,7 +119,9 @@ jobs:
   # the shared library's tests included, as the mod's own CI runs them
   # (templates/socle/.github/workflows/mod-tests.yml). The Gradle caches are
   # keyed on what sets the mod's dependencies: the pinned versions and the
-  # socle's Gradle files.
+  # socle's Gradle files. Measured on 2026-11-20: about 5 min 15 s without
+  # the Gradle cache (Gradle 3 min 15 s to 3 min 40 s), 3 min 15 s with it
+  # (Gradle 1 min 45 s).
   socle-e2e:
     runs-on: ubuntu-24.04
     # The game servers and clients it starts could hang.

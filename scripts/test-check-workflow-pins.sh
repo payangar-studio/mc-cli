@@ -6,6 +6,7 @@ check="$(cd "$(dirname "$0")" && pwd)/check-workflow-pins.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 sha=3d3c42e5aac5ba805825da76410c181273ba90b1
+release=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' "$(dirname "$check")/../Cargo.toml")
 
 failures=0
 expect() {
@@ -30,7 +31,11 @@ expect fail short-sha "      - uses: actions/checkout@${sha:0:7} # v7.0.1"
 expect fail uppercase-sha "      - uses: actions/checkout@${sha^^} # v7.0.1"
 expect fail no-ref "      - uses: actions/checkout"
 expect fail no-comment "      - uses: actions/checkout@$sha"
-expect fail reusable-tag "    uses: payangar-studio/mc-cli/.github/workflows/publish-modpack.yml@v0.4.0"
+expect pass reusable-release "    uses: payangar-studio/mc-cli/.github/workflows/publish-mod.yml@v$release"
+expect fail reusable-other-tag "    uses: payangar-studio/mc-cli/.github/workflows/publish-mod.yml@v$release.1"
+expect fail reusable-branch "    uses: payangar-studio/mc-cli/.github/workflows/publish-mod.yml@main"
+expect fail reusable-other-repo "    uses: payangar-studio/other/.github/workflows/publish-mod.yml@v$release"
+expect fail action-release-tag "      - uses: payangar-studio/mc-cli/.github/actions/setup@v$release"
 expect fail quoted-tag "        uses: 'actions/upload-artifact@v7'"
 expect fail flow-tag "      - {uses: actions/checkout@v7}"
 expect fail flow-second-key-tag "      - {name: Checkout, uses: actions/checkout@v7}"

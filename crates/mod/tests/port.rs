@@ -116,7 +116,7 @@ fn an_unknown_version_says_to_update_mc_cli() {
         .stderr(predicate::str::contains("26.3"))
         .stderr(predicate::str::contains("update mc-cli"));
 
-    assert_eq!(git(&root, &["branch", "--list"]), "* 26.3");
+    assert_eq!(git(&root, &["branch", "--list"]), "* 26.3\n  design");
     assert_eq!(git(&root, &["status", "--porcelain"]), "");
 }
 
@@ -129,7 +129,7 @@ fn the_version_the_mod_is_on_is_refused() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("already on Minecraft 26.3"));
-    assert_eq!(git(&root, &["branch", "--list"]), "* 26.3");
+    assert_eq!(git(&root, &["branch", "--list"]), "* 26.3\n  design");
 }
 
 /// The versions of the CLI's table go with the build of its own socle: an
@@ -152,7 +152,7 @@ fn an_older_socle_is_refused_until_mod_update() {
             "run `mod update`, commit, then rerun `mod port 26.3`",
         ));
 
-    assert_eq!(git(&root, &["branch", "--list"]), "* 26.2");
+    assert_eq!(git(&root, &["branch", "--list"]), "* 26.2\n  design");
     assert_eq!(git(&root, &["status", "--porcelain"]), "");
 }
 
@@ -170,7 +170,7 @@ fn uncommitted_changes_are_refused() {
             "uncommitted changes:\n M mod.toml\n?? notes.txt",
         ));
 
-    assert_eq!(git(&root, &["branch", "--list"]), "* 26.2");
+    assert_eq!(git(&root, &["branch", "--list"]), "* 26.2\n  design");
 }
 
 #[test]

@@ -71,4 +71,6 @@ from a local GPU. Only the Fabric client gametests take screenshots.
 - The port is done when CI is green on the new branch.
 - The default branch of the GitHub repository is the newest version: when the
   port is to a newer version than the current default, propose to the user to
-  make the new branch the default. Never change it without their go.
+  make the new branch the default once its CI is green, with
+  `gh repo edit --default-branch <version>`. Never change it without their go:
+  `mod setup` does not change it either, it only prints that command.

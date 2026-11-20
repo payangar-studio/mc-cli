@@ -16,7 +16,7 @@ This repository is a Minecraft mod managed with `mc-cli` (`mod` binary). Each Mi
 |---|---|
 | Bring the socle of this repository to the CLI's version | `mod update` |
 | Port the mod to another Minecraft version, on a new branch; then follow the `mod-port` skill | `mod port <version>` |
-| Configure the GitHub repository: ruleset of the release tags, vault variables, CODEOWNERS | `mod setup [--no-github]` |
+| Configure the GitHub repository once the version branch is pushed: ruleset of the release tags, vault variables, CODEOWNERS, default branch, design page | `mod setup [--no-github]` |
 | Create a new mod repository, elsewhere | `mod init [dir]` |
 
 Every command runs without a terminal: a missing value is an error that names the argument to pass. Never pass `--force` without the user's go: it overwrites what they changed.

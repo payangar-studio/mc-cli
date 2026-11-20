@@ -8,6 +8,7 @@ use mc_core::project::{Project, ProjectType};
 use mc_core::socle::Template;
 
 use crate::context::{Context, SOCLE_DIR};
+use crate::design;
 use crate::error::{Context as _, Error, Result};
 use crate::model::mod_toml::{
     self, Dependency, Loader, ModToml, Side, check_id, check_package, default_package,
@@ -152,6 +153,9 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
 
     std::fs::create_dir_all(&dir).context(format!("creating {}", dir.display()))?;
     git_init(&dir, &minecraft)?;
+    // Before the socle, whose marker stops a rerun: a missing git identity
+    // stops init here, and init resumes once it is set.
+    let branch = design::create_branch(&dir, &module)?;
     crate::socle::init(&dir, &module, pinned.versions())?;
 
     // No final period: the directory is often `.`, and `in ..` reads as the parent.
@@ -160,8 +164,21 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
         "Review {}, then build with `./gradlew build`.",
         mod_toml::FILE_NAME
     );
+    match branch {
+        design::Branch::Created => println!(
+            "Created the `{}` branch: the design of the mod, built into a page by the `mod-design` skill.",
+            design::BRANCH
+        ),
+        design::Branch::Exists => println!("Kept the existing `{}` branch.", design::BRANCH),
+        design::Branch::Clash(names) => println!(
+            "Could not create the `{0}` branch: git cannot have it beside the branches under `{0}/` ({1}). Rename them, then create `{0}` as the `mod-design` skill says.",
+            design::BRANCH,
+            names.join(", ")
+        ),
+    }
     println!(
-        "Once the repository is on GitHub, run `mod setup` to protect its release tags and set its vault variables."
+        "Once the repository is on GitHub and the {minecraft} branch is pushed, run `mod setup`: it protects the release tags, sets the vault variables, makes {minecraft} the default branch, pushes `{}` and publishes it with GitHub Pages.",
+        design::BRANCH
     );
     Ok(())
 }

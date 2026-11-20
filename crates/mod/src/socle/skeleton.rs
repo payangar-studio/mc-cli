@@ -213,7 +213,7 @@ pub fn files(module: &ModToml) -> Vec<File> {
 
 /// `template` with each `{{key}}` of `values` replaced, in one pass: a value
 /// that holds `{{...}}` is written as it is. Unknown placeholders are kept.
-fn fill(template: &str, values: &[(&str, String)]) -> String {
+pub(crate) fn fill(template: &str, values: &[(&str, String)]) -> String {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
     while let Some(start) = rest.find("{{") {

@@ -1,5 +1,6 @@
-//! `mod setup`: configures the GitHub repository of the mod, once it exists:
-//! the ruleset of the release tags, the vault variables, `CODEOWNERS`
+//! `mod setup`: configures the GitHub repository of the mod, once it exists
+//! and its version branch is pushed: the ruleset of the release tags, the
+//! vault variables, `CODEOWNERS`, the default branch and the design page
 //! ([`crate::github`]).
 
 use std::path::Path;
@@ -42,7 +43,8 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
         return Ok(());
     };
     let gh = GitHub::new(github::API, token()?);
-    let done = github::configure(
+    let mut done = Vec::new();
+    let result = github::configure(
         &gh,
         &repo,
         root,
@@ -54,12 +56,16 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
             };
             ctx.prompt.text(None, arg, question)
         },
-    )?;
-    println!("GitHub repository {repo}:");
-    for line in done {
-        println!("  {line}");
+        &mut done,
+    );
+    // Also when a step failed: what the steps before it did.
+    if !done.is_empty() {
+        println!("GitHub repository {repo}:");
+        for line in done {
+            println!("  {line}");
+        }
     }
-    Ok(())
+    result
 }
 
 /// The URL of the remote `origin`, if any.

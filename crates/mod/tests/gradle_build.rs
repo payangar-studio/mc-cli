@@ -144,6 +144,41 @@ fn builds_with_neoforge_only() {
     assert_library_tests_passed(&root, "neoforge", COMMON_LIBRARY_TESTS);
 }
 
+/// The NeoForge `runClient` and `runServer` of `mod run` load the mod alone:
+/// ModDevGradle loads every registered mod by default, the gametest mod
+/// `<id>_gametest` included. Read in the `fml.modFolders` argument of each run,
+/// printed by an init script.
+#[test]
+#[ignore = "downloads Gradle, NeoForge and Minecraft"]
+fn the_neoforge_runs_load_the_mod_without_its_test_mod() {
+    let (tmp, root) = init("neoforge", "both-required");
+    let script = tmp.path().join("mod-folders.init.gradle");
+    fs::write(
+        &script,
+        r#"gradle.projectsEvaluated {
+    def neoforge = rootProject.findProject(':neoforge')
+    if (neoforge == null) return
+    ['runClient', 'runServer'].each { name ->
+        def folders = neoforge.tasks.getByName(name).allJvmArgs.find { it.startsWith('-Dfml.modFolders=') }
+        println("$name $folders")
+    }
+}
+"#,
+    )
+    .unwrap();
+    let output = gradle(&root, &["-I", script.to_str().unwrap(), "help"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for run in ["runClient", "runServer"] {
+        let line = stdout
+            .lines()
+            .find(|l| l.starts_with(&format!("{run} ")))
+            .unwrap_or_else(|| panic!("no mod folders printed for {run}"));
+        assert!(line.contains("swift_blades%%"), "{line}");
+        assert!(!line.contains("swift_blades_gametest"), "{line}");
+    }
+}
+
 /// The loader metadata follows `mod.toml`: the side, and each dependency for
 /// the loaders it names.
 #[test]

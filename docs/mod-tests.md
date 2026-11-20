@@ -9,6 +9,8 @@ What `mod init` sets up in a mod repository, and the commands that run it. They 
 | `./gradlew :fabric:runClientGameTest` | Fabric client gametests only |
 | `./gradlew :fabric:promoteScreenshots -Pscreenshots=<dir>` | Makes the renders of a CI run the references |
 
+A test profile with `ci = true` adds a job to the workflow: Fabric's gametests with that profile's mods, screenshot comparisons skipped (see [`mod run`](mod-run.md#ci-profiles)).
+
 ## Where tests go
 
 | Layer | Fabric | NeoForge |

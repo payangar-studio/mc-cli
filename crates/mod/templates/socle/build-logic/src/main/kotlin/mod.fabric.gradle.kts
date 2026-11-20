@@ -11,7 +11,8 @@
 // - `runProductionClientGameTest`, the same on a client launched as in
 //   production, from the built jars.
 // The client runs use a virtual display (xvfb-run) when there is one. Each
-// fails when no test ran; `clientCheck` runs both client runs.
+// fails when no test ran; `clientCheck` runs both client runs. With
+// `-Pmod.testProfile` (Runs.kt), the gametest runs add a test profile's mods.
 
 import net.fabricmc.loom.api.LoomGradleExtensionAPI
 import net.fabricmc.loom.api.fabricapi.FabricApiExtension
@@ -43,6 +44,16 @@ extensions.configure<LoomGradleExtensionAPI> {
             sourceSet("client", project(":common"))
         }
     }
+    // `mod run` (Runs.kt).
+    runs.configureEach {
+        modRunDir?.let { runDirectory.set(it) }
+    }
+    runs.named("client") {
+        programArgs(joinServerArgs)
+    }
+}
+modRunDir?.let { dir ->
+    tasks.named("runClient") { stampOptionsVersion(dir, sourceSets["client"].runtimeClasspath) }
 }
 
 dependencies {
@@ -147,6 +158,12 @@ extensions.configure<LoomGradleExtensionAPI> {
         // as the reference and passes: references come from CI only.
         val properties = systemProperties.get() - "fabric.client.gametest.testModResourcesPath"
         systemProperties.set(properties + clientGametestProperties)
+    }
+    // A test profile (Runs.kt): the mods of each side, which
+    // `mod run --server` puts in `mods/` for the client and `server/mods/`.
+    testProfileDir?.let { dir ->
+        runs.named("gameTest") { systemProperties.putAll(testProfileProperties(dir, "server/mods")) }
+        runs.named("clientGameTest") { systemProperties.putAll(testProfileProperties(dir, "mods")) }
     }
 }
 

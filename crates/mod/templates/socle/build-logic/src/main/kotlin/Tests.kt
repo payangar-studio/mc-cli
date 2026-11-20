@@ -28,8 +28,16 @@ const val JUNIT = "5.14.4"
  * the options of a file without the data version of the Minecraft jar found
  * on `classpath`.
  */
-fun clientOptions(classpath: Iterable<File>): String {
-    val version = classpath.asSequence()
+fun clientOptions(classpath: Iterable<File>): String =
+    "version:${dataVersion(classpath)}\npreferredGraphicsBackend:\"opengl\"\n"
+
+/**
+ * The data version of the Minecraft jar on `classpath`. options.txt needs it:
+ * the game reads a file without it as written by its oldest version and runs
+ * every options data fix on it, which resets some current options.
+ */
+fun dataVersion(classpath: Iterable<File>): String =
+    classpath.asSequence()
         .filter { it.isFile && it.extension == "jar" }
         .mapNotNull { jar ->
             ZipFile(jar).use { zip ->
@@ -40,8 +48,6 @@ fun clientOptions(classpath: Iterable<File>): String {
             }
         }
         .firstOrNull() ?: throw GradleException("No Minecraft jar with a version.json on the run's classpath")
-    return "version:$version\npreferredGraphicsBackend:\"opengl\"\n"
-}
 
 /** Whether `program` is on the path, on Linux: the client runs then use a virtual display. */
 fun onLinuxPath(program: String): Boolean =

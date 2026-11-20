@@ -109,21 +109,49 @@ fn fails(root: &Path, name: &str, cases: &[&str], reason: &str) {
     assert!(!ok, "mod test passed:\n{report}");
     for loader in ["fabric", "neoforge"] {
         for case in cases {
-            let line = format!("FAIL {loader} {case}: ");
-            let Some(start) = report.find(&line) else {
-                panic!("no `{line}` in:\n{report}");
-            };
-            let failure = &report[start..];
-            let end = failure[1..]
-                .find("\nPASS ")
-                .min(failure[1..].find("\nFAIL "));
-            let failure = &failure[..end.map_or(failure.len(), |e| e + 1)];
+            let failure = failure(&report, loader, case);
             assert!(
                 failure.contains(reason),
                 "`{reason}` missing from:\n{failure}"
             );
         }
     }
+}
+
+/// The failure of `case` on `loader` in `report`: its `FAIL` line and the
+/// reason under it, up to the next case.
+fn failure<'a>(report: &'a str, loader: &str, case: &str) -> &'a str {
+    let line = format!("FAIL {loader} {case}: ");
+    let Some(start) = report.find(&line) else {
+        panic!("no `{line}` in:\n{report}");
+    };
+    let failure = &report[start..];
+    let end = [failure[1..].find("\nPASS "), failure[1..].find("\nFAIL ")]
+        .into_iter()
+        .flatten()
+        .min();
+    &failure[..end.map_or(failure.len(), |e| e + 2)]
+}
+
+#[test]
+fn a_failure_ends_at_the_next_case() {
+    let report = "FAIL fabric a: first\n  reason A\n\
+                  FAIL fabric b: second\n  reason B\n\
+                  FAIL neoforge a: first\n  reason C\n";
+    assert_eq!(
+        failure(report, "fabric", "a"),
+        "FAIL fabric a: first\n  reason A\n"
+    );
+    assert_eq!(
+        failure(report, "neoforge", "a"),
+        "FAIL neoforge a: first\n  reason C\n"
+    );
+    let report =
+        "PASS fabric a: first\nFAIL fabric b: second\n  reason B\nPASS neoforge a: first\n";
+    assert_eq!(
+        failure(report, "fabric", "b"),
+        "FAIL fabric b: second\n  reason B\n"
+    );
 }
 
 fn edit(path: &Path, from: &str, to: &str) {

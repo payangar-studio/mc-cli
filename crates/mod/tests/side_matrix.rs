@@ -10,9 +10,6 @@ use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
 
-mod library;
-
-const PACKAGE: &str = "com.payangar.swiftblades";
 const PACKAGE_DIR: &str = "com/payangar/swiftblades";
 
 /// A project made by `mod init` in `<tmp>/mod`, with both loaders and the
@@ -37,15 +34,6 @@ fn init(side: &str) -> (tempfile::TempDir, PathBuf) {
         .assert()
         .success();
     let root = tmp.path().join("mod");
-    // Until `mod init` copies the library itself.
-    if !root
-        .join("common/src/main/java")
-        .join(PACKAGE_DIR)
-        .join("vendor")
-        .is_dir()
-    {
-        library::copy(&root, "swift_blades", PACKAGE, "common");
-    }
     (tmp, root)
 }
 
@@ -263,7 +251,8 @@ fn defect_vanilla_client_refused_no_side_check() {
 }
 
 /// modded-client-joins and modded-client-joins-unmodded-server: a client
-/// whose mod crashes at startup never reaches the server.
+/// whose mod crashes at startup never reaches the server. The crash is seen
+/// from the client's crash line, even when the client does not exit.
 #[test]
 #[ignore = "downloads Gradle, the loaders, Minecraft and HeadlessMC, starts servers and clients"]
 fn defect_modded_client_crashes() {
@@ -280,6 +269,6 @@ fn defect_modded_client_crashes() {
         &root,
         "defect-modded-client",
         &["modded-client-joins", "modded-client-joins-unmodded-server"],
-        "the client exited",
+        "the client crashed (crash report: ",
     );
 }

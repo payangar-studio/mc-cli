@@ -166,8 +166,6 @@ impl Launcher {
             )
             .map_err(io_err("writing", &options))?;
         }
-        let out = fs::File::create(log).map_err(io_err("creating", log))?;
-        let err = out.try_clone().map_err(io_err("opening", log))?;
         let mut command = Command::new(&self.java);
         command
             .arg("-jar")
@@ -176,20 +174,8 @@ impl Launcher {
             .arg(format!("--quickPlayMultiplayer {server}"))
             .args(target)
             .env("HMC_FILES_LOCATION", files)
-            .current_dir(game)
-            .stdin(Stdio::null())
-            .stdout(out)
-            .stderr(err);
-        #[cfg(unix)]
-        std::os::unix::process::CommandExt::process_group(&mut command, 0);
-        let child = command
-            .spawn()
-            .map_err(|e| format!("cannot start HeadlessMC: {e}"))?;
-        Ok(Game {
-            child,
-            log: log.to_owned(),
-            stopped: false,
-        })
+            .current_dir(game);
+        Game::spawn(command, log)
     }
 
     /// HeadlessMC's settings: the Java of the game, never one it downloads;
@@ -215,6 +201,37 @@ pub struct Game {
 }
 
 impl Game {
+    /// Starts `command` in its own process group, its output in `log`.
+    fn spawn(mut command: Command, log: &Path) -> Step<Self> {
+        let out = fs::File::create(log).map_err(io_err("creating", log))?;
+        let err = out.try_clone().map_err(io_err("opening", log))?;
+        command.stdin(Stdio::null()).stdout(out).stderr(err);
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        let child = command
+            .spawn()
+            .map_err(|e| format!("cannot start HeadlessMC: {e}"))?;
+        Ok(Game {
+            child,
+            log: log.to_owned(),
+            stopped: false,
+        })
+    }
+
+    /// Why the client failed, if it did: it crashed, or exited. A crashed
+    /// client does not always exit (a NeoForge client can loop on an LWJGL
+    /// error after its crash report), so its crash line is the failure, and
+    /// the client is stopped.
+    pub fn failed(&mut self) -> Option<String> {
+        let output = fs::read_to_string(&self.log).unwrap_or_default();
+        if let Some(crashed) = crash(&output) {
+            self.stop();
+            return Some(crashed);
+        }
+        self.exited()
+            .map(|status| format!("the client exited ({status})"))
+    }
+
     /// The exit status, once the client has exited.
     pub fn exited(&mut self) -> Option<String> {
         match self.child.try_wait() {
@@ -263,6 +280,20 @@ impl Drop for Game {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+/// The crash of the game in its `output`, from the line the game prints
+/// with its crash report on every loader:
+/// `#@!@# Game crashed! Crash report saved to: #@!@# <path>`.
+fn crash(output: &str) -> Option<String> {
+    let line = output.lines().find(|l| l.contains("Game crashed!"))?;
+    Some(match line.split_once("Crash report saved to:") {
+        Some((_, path)) => format!(
+            "the client crashed (crash report: {})",
+            path.trim().trim_start_matches("#@!@#").trim()
+        ),
+        None => "the client crashed (no crash report saved)".into(),
+    })
 }
 
 /// Sends `signal` to the process group `group`.
@@ -338,6 +369,70 @@ mod tests {
         ] {
             assert!(config.lines().any(|l| l == line), "{line} in {config}");
         }
+    }
+
+    /// A NeoForge client that crashed may loop on an error instead of
+    /// exiting: its crash line is the failure, and the client is stopped.
+    #[cfg(unix)]
+    #[test]
+    fn a_crashed_client_that_keeps_running_has_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("client.log");
+        let mut command = Command::new("sh");
+        command.args([
+            "-c",
+            "echo 'Loading'; \
+             echo '#@!@# Game crashed! Crash report saved to: #@!@# /runs/client/crash-reports/crash-client.txt'; \
+             while true; do echo \"Can't return abstract class: Lorg/lwjgl/stb/STBImage;\"; sleep 0.1; done",
+        ]);
+        let mut game = Game::spawn(command, &log).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let failure = loop {
+            if let Some(failure) = game.failed() {
+                break failure;
+            }
+            assert!(Instant::now() < deadline, "no failure seen");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        assert_eq!(
+            failure,
+            "the client crashed (crash report: /runs/client/crash-reports/crash-client.txt)"
+        );
+        assert!(game.exited().is_some(), "the crashed client still runs");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_client_that_exits_without_crash_report_has_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("client.log");
+        let mut command = Command::new("sh");
+        command.args(["-c", "echo 'Process mc-client failed with code 1'; exit 1"]);
+        let mut game = Game::spawn(command, &log).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let failure = loop {
+            if let Some(failure) = game.failed() {
+                break failure;
+            }
+            assert!(Instant::now() < deadline, "no failure seen");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        assert_eq!(failure, "the client exited (exit status: 1)");
+    }
+
+    #[test]
+    fn the_crash_line_gives_the_crash_report() {
+        assert_eq!(
+            crash(
+                "[main/INFO]: Loading\n#@!@# Game crashed! Crash report saved to: #@!@# /r/crash.txt\n"
+            ),
+            Some("the client crashed (crash report: /r/crash.txt)".into())
+        );
+        assert_eq!(
+            crash("#@!@# Game crashed! Crash report could not be saved. #@!@#"),
+            Some("the client crashed (no crash report saved)".into())
+        );
+        assert_eq!(crash("[main/INFO]: Loading\n"), None);
     }
 
     #[test]

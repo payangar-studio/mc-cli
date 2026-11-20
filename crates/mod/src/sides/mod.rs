@@ -175,9 +175,9 @@ fn play(
             Err(Wait::Timeout) => {}
             Err(wait) => return Err(server_failed(server, &wait, "waiting for the client")),
         }
-        if let Some(status) = game.exited() {
+        if let Some(failure) = game.failed() {
             return Err(format!(
-                "the client exited ({status}) before reaching the server; last lines of its output:\n{}",
+                "{failure} before reaching the server; last lines of its output:\n{}",
                 game.tail()
             ));
         }

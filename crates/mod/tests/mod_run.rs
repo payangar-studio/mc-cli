@@ -109,10 +109,23 @@ fn the_client_joins_the_dev_server() {
         }
         thread::sleep(Duration::from_secs(2));
     };
-    let _ = Process::new("kill")
-        .args(["-TERM", &format!("-{}", child.id())])
-        .status();
-    let _ = child.wait();
+    eprintln!(
+        "stopping mod run after {}s (joined: {})",
+        started.elapsed().as_secs(),
+        joined.is_some()
+    );
+    stop(&mut child);
+    let multi = root.join("runs/multi");
+    keep_logs(
+        "server",
+        &[
+            (output.clone(), "mod-run.log"),
+            (multi.join("logs"), "client-logs"),
+            (multi.join("crash-reports"), "client-crash-reports"),
+            (multi.join("server/logs"), "server-logs"),
+            (multi.join("server/gradle.log"), "server-gradle.log"),
+        ],
+    );
 
     let server_log = fs::read_to_string(&log).unwrap_or_default();
     eprintln!(
@@ -139,22 +152,101 @@ fn the_client_joins_the_dev_server() {
     );
 }
 
-/// Runs `script` as a `run` step of GitHub Actions does, in `root`.
-fn step(root: &Path, script: &str, env: &[(String, String)]) -> (bool, String) {
-    let output = Process::new("bash")
+/// Runs `script` as a `run` step of GitHub Actions does, in `root`, for at
+/// most [`TIMEOUT`]; returns whether it passed and its output, also kept in
+/// `log`.
+fn step(root: &Path, script: &str, env: &[(String, String)], log: &Path) -> (bool, String) {
+    eprintln!("$ {script}");
+    fs::create_dir_all(log.parent().unwrap()).unwrap();
+    let out = fs::File::create(log).unwrap();
+    let mut child = Process::new("bash")
         .args(["--noprofile", "--norc", "-eo", "pipefail", "-c", script])
         .current_dir(root)
         .envs(env.iter().map(|(k, v)| (k, v)))
         .stdin(Stdio::null())
-        .output()
+        .stdout(out.try_clone().unwrap())
+        .stderr(out)
+        // Its own process group, stopped as a whole on timeout.
+        .process_group(0)
+        .spawn()
         .unwrap();
-    let log = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    eprintln!("$ {script}\n{log}");
-    (output.status.success(), log)
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break Some(status);
+        }
+        if started.elapsed() > TIMEOUT {
+            stop(&mut child);
+            break None;
+        }
+        thread::sleep(Duration::from_secs(2));
+    };
+    let output = fs::read_to_string(log).unwrap_or_default();
+    eprintln!("{output}");
+    if status.is_none() {
+        eprintln!("timed out after {} minutes", TIMEOUT.as_secs() / 60);
+    }
+    (status.is_some_and(|s| s.success()), output)
+}
+
+/// Stops the process group `child` leads: TERM, then KILL when it is still
+/// there after 30 seconds.
+fn stop(child: &mut std::process::Child) {
+    let group = format!("-{}", child.id());
+    let _ = Process::new("kill").args(["-TERM", &group]).status();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        thread::sleep(Duration::from_secs(1));
+    }
+    let _ = Process::new("kill").args(["-KILL", &group]).status();
+    let _ = child.wait();
+}
+
+/// Copies each `(file or directory, name)` that exists to
+/// `$MOD_TESTS_ARTIFACTS/<test>/<name>`, when set: CI uploads them.
+fn keep_logs(test: &str, kept: &[(PathBuf, &str)]) {
+    let Some(dir) = std::env::var_os("MOD_TESTS_ARTIFACTS") else {
+        return;
+    };
+    let to = Path::new(&dir).join(test);
+    fs::create_dir_all(&to).unwrap();
+    for (from, name) in kept {
+        if from.is_dir() {
+            copy_dir(from, &to.join(name));
+        } else if from.is_file() {
+            fs::copy(from, to.join(name)).unwrap();
+        }
+    }
+}
+
+/// The step outputs under `steps` and the logs of the Fabric game runs of
+/// `root`, for [`keep_logs`].
+fn fabric_run_logs(steps: &Path, root: &Path) -> Vec<(PathBuf, String)> {
+    let mut kept = vec![(steps.to_owned(), "steps".to_owned())];
+    if let Ok(runs) = fs::read_dir(root.join("fabric/build/run")) {
+        for run in runs.map(|e| e.unwrap().path()) {
+            let run_name = run.file_name().unwrap().to_string_lossy().into_owned();
+            for dir in ["logs", "crash-reports"] {
+                kept.push((run.join(dir), format!("{run_name}-{dir}")));
+            }
+        }
+    }
+    kept
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for entry in fs::read_dir(from).unwrap().map(|e| e.unwrap()) {
+        let path = entry.path();
+        if path.is_dir() {
+            copy_dir(&path, &to.join(entry.file_name()));
+        } else {
+            fs::copy(&path, to.join(entry.file_name())).unwrap();
+        }
+    }
 }
 
 /// The mod's workflow on a CI profile with Sodium: the `profiles` job lists
@@ -182,12 +274,14 @@ fn a_ci_profile_runs_the_fabric_gametests_with_its_mods() {
             .unwrap_or_else(|| panic!("no step `{name}`"))
             .to_owned()
     };
+    let steps = tmp.path().join("steps");
     let output = tmp.path().join("github-output");
     let env = [("GITHUB_OUTPUT".to_owned(), output.display().to_string())];
     let (listed, _) = step(
         &root,
         &named(&jobs["profiles"], "List the CI profiles"),
         &env,
+        &steps.join("0-list.log"),
     );
     assert!(listed, "the CI profiles were not listed");
     assert_eq!(fs::read_to_string(&output).unwrap(), "names=[\"sodium\"]\n");
@@ -209,7 +303,7 @@ fn a_ci_profile_runs_the_fabric_gametests_with_its_mods() {
         format!("{}:{path}", bin.parent().unwrap().display()),
     ));
     let mut gradle = String::new();
-    for s in job["steps"].as_vec().unwrap() {
+    for (i, s) in job["steps"].as_vec().unwrap().iter().enumerate() {
         let (Some(script), name) = (s["run"].as_str(), s["name"].as_str().unwrap_or("")) else {
             continue;
         };
@@ -217,7 +311,10 @@ fn a_ci_profile_runs_the_fabric_gametests_with_its_mods() {
         if name.starts_with("Install") {
             continue;
         }
-        let (ok, log) = step(&root, script, &env);
+        let (ok, log) = step(&root, script, &env, &steps.join(format!("{}.log", i + 1)));
+        let kept = fabric_run_logs(&steps, &root);
+        let kept: Vec<_> = kept.iter().map(|(p, n)| (p.clone(), n.as_str())).collect();
+        keep_logs("ci_profile", &kept);
         assert!(ok, "step `{name}` failed");
         gradle.push_str(&log);
     }

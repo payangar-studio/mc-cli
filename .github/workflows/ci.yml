@@ -82,6 +82,11 @@ jobs:
   # The test pyramid of a project made by `mod init`: each layer's example
   # passes and each guard catches its defect. Same packages and environment as
   # the client job of the mod's workflow (templates/socle/.github/workflows).
+  # `every_layer_passes` is the end-to-end test of the socle: a mod with both
+  # loaders builds and passes every test layer, the shared library's tests
+  # included. The Gradle cache is keyed on what sets the generated mods'
+  # dependencies: the pinned versions and the build files of the socle and
+  # the skeleton.
   mod-tests:
     runs-on: ubuntu-24.04
     # The game servers and clients it starts could hang.
@@ -94,6 +99,13 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
+          cache: gradle
+          cache-dependency-path: |
+            crates/mod/src/versions.rs
+            crates/mod/templates/socle/**/*.gradle*
+            crates/mod/templates/socle/**/*.kt
+            crates/mod/templates/socle/**/*.properties
+            crates/mod/templates/skeleton/*.gradle*
       - name: Install the virtual display and the software renderers
         run: |
           sudo apt-get update
@@ -113,3 +125,8 @@ jobs:
           name: mod-tests
           path: ${{ runner.temp }}/mod-tests/
           if-no-files-found: ignore
+      # setup-java saves ~/.gradle/caches after the job. Gradle's build cache
+      # stays out of it: a later run would take the test results from it
+      # instead of running the tests.
+      - name: Drop Gradle's build cache before the cache is saved
+        run: rm -rf ~/.gradle/caches/build-cache-1

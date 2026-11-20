@@ -179,18 +179,20 @@ fn edit(path: &Path, from: &str, to: &str) {
     fs::write(path, text.replace(from, to)).unwrap();
 }
 
-/// Every layer's example passes: unit tests, NeoForge's integration tests,
-/// both loaders' server gametests, Fabric's client gametests against the
-/// reference render (dev and production clients), NeoForge's self-tests.
+/// The end-to-end test of the socle: a mod with both loaders builds, and every
+/// layer's example passes: unit tests, NeoForge's integration tests, both
+/// loaders' server gametests, Fabric's client gametests against the reference
+/// render (dev and production clients), NeoForge's self-tests, along with the
+/// shared library's tests.
 #[test]
 #[ignore = "downloads Gradle, the loaders and Minecraft, starts the game"]
 fn every_layer_passes() {
     let (_tmp, root) = init("fabric,neoforge", "both-required");
-    let output = gradle(&root, &["check", "clientCheck"]);
+    let output = gradle(&root, &["build", "clientCheck"]);
     keep_runs(&root, "every_layer_passes");
     assert!(
         output.status.success(),
-        "./gradlew check clientCheck failed"
+        "./gradlew build clientCheck failed"
     );
     let log = log(&output);
     for (task, tests) in [

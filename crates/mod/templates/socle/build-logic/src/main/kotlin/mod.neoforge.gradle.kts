@@ -21,6 +21,7 @@ import net.neoforged.moddevgradle.dsl.RunModel
 plugins {
     id("mod.java")
     id("net.neoforged.moddev")
+    id("me.modmuss50.mod-publish-plugin")
 }
 
 val mod = ModToml.read(rootDir.resolve("mod.toml"))
@@ -173,3 +174,5 @@ tasks.register("clientCheck") {
     description = "Runs NeoForge's client self-test."
     dependsOn(runClientSelfTest)
 }
+// One version of this loader's jar on each platform (Publication.kt).
+configurePublication(mod, pinned, "neoforge")

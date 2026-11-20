@@ -19,8 +19,14 @@ val SIDES = listOf("client", "server", "both-required", "both-optional")
 /** Values of a dependency's `type` in mod.toml. */
 val DEPENDENCY_TYPES = listOf("required", "optional", "incompatible")
 
-/** A `[[dependencies]]` entry of mod.toml. */
-data class ModDependency(val id: String, val type: String, val loaders: List<String>)
+/** A `[[dependencies]]` entry of mod.toml, with its project slug on each platform. */
+data class ModDependency(
+    val id: String,
+    val type: String,
+    val loaders: List<String>,
+    val modrinth: String? = null,
+    val curseforge: String? = null,
+)
 
 /** mod.toml. */
 data class ModToml(
@@ -46,6 +52,12 @@ data class ModToml(
                 val value: String? = table.getString(key)
                 return value?.takeIf { it.isNotBlank() }
                     ?: throw GradleException("$context: `$key` is missing or empty")
+            }
+            fun optionalString(table: TomlTable, key: String, context: String): String? {
+                if (!table.contains(key)) return null
+                val value = table.get(key) as? String
+                    ?: throw GradleException("$context: `$key` must be a string")
+                return value.trim().takeIf { it.isNotEmpty() }
             }
             fun strings(table: TomlTable, key: String, context: String): List<String>? {
                 val array: TomlArray = table.getArray(key) ?: return null
@@ -77,6 +89,8 @@ data class ModToml(
                         loaders = (strings(table, "loaders", context) ?: loaders).onEach {
                             oneOf(it, loaders, "$context, loaders")
                         },
+                        modrinth = optionalString(table, "modrinth", context),
+                        curseforge = optionalString(table, "curseforge", context),
                     )
                 }
             } ?: emptyList()

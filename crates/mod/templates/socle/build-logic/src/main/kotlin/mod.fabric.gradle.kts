@@ -20,6 +20,7 @@ import net.fabricmc.loom.task.RunGameTask
 plugins {
     id("mod.java")
     id("net.fabricmc.fabric-loom")
+    id("me.modmuss50.mod-publish-plugin")
 }
 
 val mod = ModToml.read(rootDir.resolve("mod.toml"))
@@ -216,3 +217,5 @@ tasks.register("promoteScreenshots") {
         }
     }
 }
+// One version of this loader's jar on each platform (Publication.kt).
+configurePublication(mod, pinned, "fabric")

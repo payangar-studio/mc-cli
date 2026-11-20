@@ -1,0 +1,215 @@
+# Publishes a mod repository's jars to Modrinth and CurseForge, one version
+# per loader, through mod-publish-plugin, which the mod's build configures
+# (build-logic/, laid down by the mod socle).
+#
+# Called on a tag by `.github/workflows/mod-publish.yml`, which the socle lays
+# down in every mod repository. Everything here runs in the context of the
+# calling repository: `github.*` is the mod's, the checkout is the mod's, the
+# OIDC token names the mod's repository and tag.
+#
+# Secrets come from the vault (Infisical) by OIDC, never from GitHub secrets.
+# The vault URL and the identity id are not secrets, but mod repositories are
+# public: the caller hands them over from its repository variables.
+
+name: Publish mod
+
+on:
+  workflow_call:
+    inputs:
+      dry-run:
+        description: Check the tag and describe the versions without reading the vault or publishing
+        type: boolean
+        default: false
+      vault-url:
+        description: URL of the Infisical vault (repository variable INFISICAL_URL)
+        type: string
+        default: ""
+      identity-id:
+        description: Id of the vault identity `ci-minecraft` (repository variable INFISICAL_IDENTITY_ID)
+        type: string
+        default: ""
+
+permissions: {}
+
+env:
+  # Vault project and folder of the organization CI `ci-minecraft`.
+  VAULT_PROJECT: minecraft
+  VAULT_ENVIRONMENT: prod
+  VAULT_PATH: /app
+  USER_AGENT: payangar-studio/mc-cli publish-mod-workflow
+
+jobs:
+  # Checks the tag; a dry run also describes the versions. Without access to
+  # the vault: a dry run may run from any branch.
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Every branch: the guard compares the tag with its version branch.
+          fetch-depth: 0
+
+      # The tag is v<version> or v<version>+<minecraft>. A guard against
+      # mistakes, not a security boundary: a tag outside the version branch
+      # would publish a version nobody reviewed.
+      - name: Check the tag
+        id: tag
+        env:
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          if [[ "$GITHUB_REF_TYPE" != tag ]]; then
+            if [[ "$DRY_RUN" == true ]]; then
+              echo "::notice::$GITHUB_REF is not a tag: dry run of version 0.0.0-dev, without guard."
+              echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::Publishing runs on a tag, and $GITHUB_REF is not one. Push a v<version> tag on the mod's version branch, or run the workflow from that tag."
+            exit 1
+          fi
+          tag="$GITHUB_REF_NAME"
+          if [[ ! "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)(\+([0-9A-Za-z.-]+))?$ ]]; then
+            echo "::error::Tag $tag is not a release tag: name it v<version> (v1.2.0, v1.2.0-beta.1), or v<version>+<minecraft> (v1.2.0+26.3)."
+            exit 1
+          fi
+          version="${BASH_REMATCH[1]}"
+          tagged="${BASH_REMATCH[4]}"
+          minecraft=$(python3 -c 'import tomllib; print(tomllib.load(open(".mod/socle.toml", "rb"))["init"]["minecraft"])') || {
+            echo "::error::.mod/socle.toml of $tag gives no Minecraft version: is this a mod repository?"
+            exit 1
+          }
+          if [[ -n "$tagged" && "$tagged" != "$minecraft" ]]; then
+            echo "::error::Tag $tag names Minecraft $tagged, but its commit is a Minecraft $minecraft mod (.mod/socle.toml)."
+            exit 1
+          fi
+          if ! git rev-parse --verify --quiet "refs/remotes/origin/$minecraft" > /dev/null; then
+            echo "::error::The repository has no branch $minecraft, the version branch of tag $tag: push the branch, then the tag."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/$minecraft"; then
+            echo "::error::Tag $tag is not on its version branch: its commit $GITHUB_SHA is not an ancestor of origin/$minecraft. Merge the work into $minecraft, then tag a commit of $minecraft."
+            exit 1
+          fi
+          # The same rule as the build's: the notes are not blank.
+          if ! grep -qs '[^[:space:]]' "changelogs/$version.md"; then
+            echo "::error::Tag $tag has no changelogs/$version.md, or it holds no notes: write the notes of $version, commit them on $minecraft, move the tag onto that commit, then push it again."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        if: ${{ inputs.dry-run }}
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: gradle
+
+      # The build declares a platform only when page/page.toml has its
+      # project id, and warns about the others.
+      - name: Describe the versions
+        if: ${{ inputs.dry-run }}
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          ./gradlew publishMods "-Pversion=$VERSION" -PdryRun=true --console=plain
+          shopt -s nullglob
+          results=(*/build/publishMods/*.dry-run.json)
+          if [[ ${#results[@]} -eq 0 ]]; then
+            echo "::error::Nothing to publish: page/page.toml has no project id, neither [modrinth] nor [curseforge]."
+            exit 1
+          fi
+          for file in "${results[@]}"; do
+            echo "::notice::Dry run, $file: $(jq -c '{version, type, loaders, gameVersions, dependencies}' "$file")"
+          done
+
+      - name: Keep the description of a dry run
+        if: ${{ inputs.dry-run }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: publish-dry-run
+          path: "*/build/publishMods/"
+          retention-days: 7
+
+  publish:
+    needs: check
+    if: ${{ !inputs.dry-run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read the secrets from the vault
+        env:
+          VAULT_URL: ${{ inputs.vault-url }}
+          IDENTITY_ID: ${{ inputs.identity-id }}
+        run: |
+          # A failed request fails its pipeline, not only the last jq.
+          set -o pipefail
+          if [[ -z "$VAULT_URL" || -z "$IDENTITY_ID" ]]; then
+            echo "::error::Set the repository variables INFISICAL_URL and INFISICAL_IDENTITY_ID (Settings, Secrets and variables, Actions, Variables), then run the workflow again from the tag."
+            exit 1
+          fi
+          vault="${VAULT_URL%/}"
+          audience="https://github.com/$GITHUB_REPOSITORY_OWNER"
+          jwt=$(curl -sS --fail -G -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            --data-urlencode "audience=$audience" "$ACTIONS_ID_TOKEN_REQUEST_URL" | jq -r '.value // empty') || jwt=""
+          if [[ -z "$jwt" ]]; then
+            echo "::error::GitHub gave no OIDC token: the calling job must grant \`id-token: write\`."
+            exit 1
+          fi
+          echo "::add-mask::$jwt"
+          token=$(jq -n --arg identityId "$IDENTITY_ID" --arg jwt "$jwt" '{identityId: $identityId, jwt: $jwt}' |
+            curl -sS --fail -A "$USER_AGENT" -H "Content-Type: application/json" --data @- \
+              "$vault/api/v1/auth/oidc-auth/login" | jq -r '.accessToken // empty') || token=""
+          if [[ -z "$token" ]]; then
+            echo "::error::The vault refused the login of identity ci-minecraft for $GITHUB_REPOSITORY on $GITHUB_REF."
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          # Project slugs carry a random suffix: the project is found by name.
+          slug=$(curl -sS --fail -A "$USER_AGENT" -H "Authorization: Bearer $token" \
+            "$vault/api/v1/workspace" | jq -r --arg name "$VAULT_PROJECT" '.workspaces[] | select(.name == $name) | .slug')
+          if [[ -z "$slug" ]]; then
+            echo "::error::Vault project $VAULT_PROJECT is not visible to identity ci-minecraft."
+            exit 1
+          fi
+          secrets=$(curl -sS --fail -G -A "$USER_AGENT" -H "Authorization: Bearer $token" \
+            --data-urlencode "workspaceSlug=$slug" \
+            --data-urlencode "environment=$VAULT_ENVIRONMENT" \
+            --data-urlencode "secretPath=$VAULT_PATH" \
+            "$vault/api/v3/secrets/raw")
+          # Named like the variables the mod's build reads. Every token is
+          # required: with one only, the build would publish on one platform
+          # and fail on the other.
+          for name in MC_MODRINTH_TOKEN MC_CURSEFORGE_UPLOAD_TOKEN; do
+            value=$(jq -r --arg name "$name" '.secrets[] | select(.secretKey == $name) | .secretValue' <<<"$secrets")
+            if [[ -z "$value" ]]; then
+              echo "::error::$name is not in $VAULT_PROJECT:$VAULT_PATH of the vault: add it, then run the workflow again from the tag. Nothing was published."
+              exit 1
+            fi
+            echo "::add-mask::$value"
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done
+
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: gradle
+
+      - name: Publish
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          ./gradlew publishMods "-Pversion=$VERSION" --console=plain
+          shopt -s nullglob
+          results=(*/build/publishMods/publish*.json)
+          if [[ ${#results[@]} -eq 0 ]]; then
+            echo "::error::Nothing published: page/page.toml has no project id, neither [modrinth] nor [curseforge]."
+            exit 1
+          fi

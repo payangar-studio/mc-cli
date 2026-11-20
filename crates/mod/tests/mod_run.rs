@@ -193,16 +193,22 @@ fn step(root: &Path, script: &str, env: &[(String, String)], log: &Path) -> (boo
 /// there after 30 seconds.
 fn stop(child: &mut std::process::Child) {
     let group = format!("-{}", child.id());
-    let _ = Process::new("kill").args(["-TERM", &group]).status();
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while Instant::now() < deadline {
-        if child.try_wait().unwrap().is_some() {
-            break;
+    for signal in ["-TERM", "-KILL"] {
+        let kill = Process::new("kill").args([signal, "--", &group]).output();
+        eprintln!("kill {signal} -- {group}: {kill:?}");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            if child.try_wait().unwrap().is_some() {
+                return;
+            }
+            thread::sleep(Duration::from_secs(1));
         }
-        thread::sleep(Duration::from_secs(1));
+        let ps = Process::new("ps")
+            .args(["-eo", "pid,ppid,pgid,stat,args"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+        eprintln!("still running after {signal}:\n{}", ps.unwrap_or_default());
     }
-    let _ = Process::new("kill").args(["-KILL", &group]).status();
-    let _ = child.wait();
 }
 
 /// Copies each `(file or directory, name)` that exists to

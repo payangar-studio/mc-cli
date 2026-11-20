@@ -104,15 +104,16 @@ pub enum Protection {
     NeedsPlan,
 }
 
-/// What became of GitHub Pages of the `design` branch.
+/// What became of GitHub Pages of the `design` branch. The URL of the site
+/// is there when GitHub gives it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pages {
-    /// The site was created, or moved from another source; its URL.
-    Set(String),
-    /// It already published `design` from `/docs`; its URL.
-    Kept(String),
-    /// GitHub refuses Pages on this private repository without a paid plan.
-    NeedsPlan,
+    /// The site was created.
+    Set(Option<String>),
+    /// It already published `design` from `/docs`.
+    Kept(Option<String>),
+    /// It publishes something else, described here: left alone.
+    Other(String),
 }
 
 /// A client of the GitHub REST API, authenticated by a token.
@@ -164,7 +165,6 @@ impl GitHub {
             ("GET", _) => with_headers!(self.agent.get(&url)).call(),
             ("POST", Some(b)) => with_headers!(self.agent.post(&url)).send_json(b),
             ("PATCH", Some(b)) => with_headers!(self.agent.patch(&url)).send_json(b),
-            ("PUT", Some(b)) => with_headers!(self.agent.put(&url)).send_json(b),
             _ => unreachable!("{method} without a body is not used"),
         };
         let mut response = response.context(what.clone())?;
@@ -284,40 +284,35 @@ impl GitHub {
         }
     }
 
-    /// Sets Pages of `repo` to publish the `design` branch from `/docs`:
-    /// creates the site when there is none, changes its source when it
-    /// differs.
-    pub fn publish_design(&self, repo: &Repo, info: &RepoInfo) -> Result<Pages> {
+    /// Creates the Pages site of `repo` from the `design` branch, folder
+    /// `/docs`, when it has none. An existing site is left alone.
+    pub fn publish_design(&self, repo: &Repo) -> Result<Pages> {
         let path = format!("/repos/{repo}/pages");
-        let body = json!({
-            "build_type": "legacy",
-            "source": { "branch": design::BRANCH, "path": pages::FOLDER },
-        });
+        let url = |site: &Value| site["html_url"].as_str().map(str::to_owned);
         let (status, site) = self.call("GET", &path, None)?;
         match status {
             200 => {
-                let url = site["html_url"].as_str().unwrap_or_default().to_owned();
-                if site["build_type"] == "legacy"
-                    && site["source"]["branch"] == design::BRANCH
-                    && site["source"]["path"] == pages::FOLDER
-                {
-                    return Ok(Pages::Kept(url));
-                }
-                let (status, answer) = self.call("PUT", &path, Some(&body))?;
-                match status {
-                    204 | 200 => Ok(Pages::Set(url)),
-                    _ => Err(unexpected("PUT", &path, status, &answer)),
-                }
+                let source = &site["source"];
+                Ok(if site["build_type"] != "legacy" {
+                    Pages::Other("a workflow".into())
+                } else if source["branch"] == design::BRANCH && source["path"] == pages::FOLDER {
+                    Pages::Kept(url(&site))
+                } else {
+                    Pages::Other(format!(
+                        "the `{}` branch, folder `{}`",
+                        source["branch"].as_str().unwrap_or("?"),
+                        source["path"].as_str().unwrap_or("?")
+                    ))
+                })
             }
             404 => {
+                let body = json!({
+                    "build_type": "legacy",
+                    "source": { "branch": design::BRANCH, "path": pages::FOLDER },
+                });
                 let (status, answer) = self.call("POST", &path, Some(&body))?;
                 match status {
-                    201 | 200 => Ok(Pages::Set(
-                        answer["html_url"].as_str().unwrap_or_default().to_owned(),
-                    )),
-                    // "Your current plan does not support GitHub Pages for
-                    // this repository."
-                    422 if info.private => Ok(Pages::NeedsPlan),
+                    201 | 200 => Ok(Pages::Set(url(&answer))),
                     _ => Err(unexpected("POST", &path, status, &answer)),
                 }
             }
@@ -326,8 +321,9 @@ impl GitHub {
     }
 }
 
-/// Configures `repo` for the mod at `root` and returns what it did, one line
-/// each. Missing on GitHub, the repository is left alone.
+/// Configures `repo` for the mod at `root` and adds to `done` what it did,
+/// one line per step as it finishes, so that a failed step leaves the lines
+/// of the steps before it. Missing on GitHub, the repository is left alone.
 ///
 /// - Each variable of [`VARIABLES`] takes the value given for it; without
 ///   one, a variable already set is kept, and a missing one gets the answer
@@ -337,23 +333,26 @@ impl GitHub {
 /// - `CODEOWNERS` names the token's account, unless GitHub already has one.
 /// - The newest Minecraft version branch becomes the default branch. It must
 ///   be on `origin` already: setup refuses before any change otherwise.
+///   Without a version branch, or when git cannot read `origin`, this step
+///   and the next are skipped.
 /// - The `design` branch is pushed when `origin` lacks it, and Pages publishes
-///   it from `/docs`. A private repository without a paid plan is skipped.
+///   it from `/docs` unless the repository has a site already. A private
+///   repository is skipped: its site would be public.
 pub fn configure(
     gh: &GitHub,
     repo: &Repo,
     root: &Path,
     given: [Option<String>; 2],
     mut ask: impl FnMut(&str, &str) -> Result<String>,
-) -> Result<Vec<String>> {
-    let mut done = Vec::new();
+    done: &mut Vec<String>,
+) -> Result<()> {
     let Some(info) = gh.repository(repo)? else {
         done.push(format!(
             "{repo} does not exist on GitHub, or this account cannot see it: nothing configured. Create it, push, then run `mod setup` again."
         ));
-        return Ok(done);
+        return Ok(());
     };
-    let remote = pages::read(root)?;
+    let plan = pages::read(root)?;
     let mut values = Vec::new();
     for ((name, question), value) in VARIABLES.into_iter().zip(given) {
         let value = match value {
@@ -404,8 +403,15 @@ pub fn configure(
             "Wrote {CODEOWNERS} with @{login} as the owner of the workflows: commit it."
         ));
     }
-    publish_design(gh, repo, &info, root, &remote, &mut done)?;
-    Ok(done)
+    match plan {
+        pages::Plan::Publish(remote) => publish_design(gh, repo, &info, root, &remote, done),
+        pages::Plan::Skip(why) => {
+            done.push(format!(
+                "Skipped the default branch and GitHub Pages: {why}"
+            ));
+            Ok(())
+        }
+    }
 }
 
 /// The default branch, then the `design` branch and its page.
@@ -439,22 +445,33 @@ fn publish_design(
         }
     }
     let folder = pages::FOLDER;
-    let page = |url: &str| format!("{}/design/", url.trim_end_matches('/'));
-    done.push(match gh.publish_design(repo, info)? {
+    let by_hand = format!(
+        "set the source of Pages to the `{branch}` branch, folder `{folder}`, in the settings of the repository"
+    );
+    // GitHub's documentation: "GitHub Pages sites are publicly available on
+    // the internet, even if the repository for the site is private".
+    if info.private {
+        done.push(format!(
+            "Skipped GitHub Pages: {repo} is private, and a Pages site is public on the internet whatever its repository. To publish the design page anyway, {by_hand}."
+        ));
+        return Ok(());
+    }
+    let page = |url: Option<String>| {
+        url.map(|url| format!(": {}/design/", url.trim_end_matches('/')))
+            .unwrap_or_default()
+    };
+    done.push(match gh.publish_design(repo)? {
         Pages::Set(url) => format!(
-            "Set GitHub Pages to the `{branch}` branch, folder `{folder}`: {} (built within a few minutes).",
-            page(&url)
+            "Set GitHub Pages to the `{branch}` branch, folder `{folder}`{} (built within a few minutes).",
+            page(url)
         ),
         Pages::Kept(url) => format!(
-            "Kept GitHub Pages on the `{branch}` branch, folder `{folder}`: {}",
-            page(&url)
+            "Kept GitHub Pages on the `{branch}` branch, folder `{folder}`{}",
+            page(url)
         ),
-        Pages::NeedsPlan => {
-            tracing::warn!(
-                "{repo} is private: GitHub needs a paid plan for Pages there, the design page is not published"
-            );
-            "Skipped GitHub Pages: GitHub needs a paid plan for Pages on this private repository.".into()
-        }
+        Pages::Other(source) => format!(
+            "Kept GitHub Pages, which publishes {source}: the design page is not published. To publish it, {by_hand}."
+        ),
     });
     Ok(())
 }

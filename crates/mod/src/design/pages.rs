@@ -17,7 +17,16 @@ use super::BRANCH;
 /// The folder of the branch Pages publishes.
 pub const FOLDER: &str = "/docs";
 
-/// The branches of the mod on `origin`, read before setup changes anything.
+/// What setup does with the default branch and the `design` branch, read
+/// from the branches of `origin` before setup changes anything.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Plan {
+    Publish(Remote),
+    /// Neither the default branch nor Pages can be set: why.
+    Skip(String),
+}
+
+/// The branches of the mod on `origin`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Remote {
     /// The newest Minecraft version branch, here or on `origin`, which is on
@@ -37,14 +46,22 @@ pub enum Design {
 }
 
 /// Reads the branches of `root` and of its `origin`. Refuses when the newest
-/// Minecraft version branch is not on `origin` yet.
-pub fn read(root: &Path) -> Result<Remote> {
+/// Minecraft version branch is not on `origin` yet; skips when there is no
+/// version branch, or when `origin` cannot be read.
+pub fn read(root: &Path) -> Result<Plan> {
     let local = git(root, &["for-each-ref", "--format=%(refname)", "refs/heads"])?;
     let local: Vec<&str> = local
         .lines()
         .filter_map(|r| r.strip_prefix("refs/heads/"))
         .collect();
-    let remote = git(root, &["ls-remote", "--heads", "origin"])?;
+    let remote = run(root, &["ls-remote", "--heads", "origin"])?;
+    if !remote.status.success() {
+        return Ok(Plan::Skip(format!(
+            "could not read the branches of origin: {}. Check access with `git ls-remote origin`, then run `mod setup` again.",
+            String::from_utf8_lossy(&remote.stderr).trim()
+        )));
+    }
+    let remote = String::from_utf8_lossy(&remote.stdout);
     let remote: Vec<&str> = remote
         .lines()
         .filter_map(|l| l.split_once('\t'))
@@ -57,9 +74,8 @@ pub fn read(root: &Path) -> Result<Remote> {
         .max()
         .map(|(_, b)| b.to_owned())
     else {
-        return Err(Error::usage(
-            "no branch named after a Minecraft version, here or on origin",
-            "a mod lives on a branch named after its Minecraft version (`26.3`): create it, push it, then run `mod setup` again",
+        return Ok(Plan::Skip(
+            "no branch named after a Minecraft version (`26.3`) here or on origin.".into(),
         ));
     };
     if !remote.contains(&version.as_str()) {
@@ -77,7 +93,7 @@ pub fn read(root: &Path) -> Result<Remote> {
     } else {
         Design::Missing
     };
-    Ok(Remote { version, design })
+    Ok(Plan::Publish(Remote { version, design }))
 }
 
 /// Pushes the local `design` branch to `origin`.
@@ -121,16 +137,19 @@ fn git(root: &Path, args: &[&str]) -> Result<String> {
                 args.join(" "),
                 String::from_utf8_lossy(&output.stderr).trim()
             ),
-            "check that origin is reachable with `git ls-remote origin`, then run `mod setup` again",
+            "check the repository with `git status`, then run `mod setup` again",
         ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
+/// Runs git in `root`, which never asks for a username or a password on the
+/// terminal: setup runs without one.
 fn run(root: &Path, args: &[&str]) -> Result<std::process::Output> {
     Command::new("git")
         .args(args)
         .current_dir(root)
+        .env("GIT_TERMINAL_PROMPT", "0")
         .output()
         .map_err(|e| Error::internal("could not run git", "install git").with_source(e))
 }

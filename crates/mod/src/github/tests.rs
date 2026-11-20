@@ -124,6 +124,18 @@ fn no_rulesets(server: &mut ServerGuard) -> mockito::Mock {
         .create()
 }
 
+/// [`super::configure`], with the lines it reports as its result.
+fn configure(
+    gh: &GitHub,
+    repo: &Repo,
+    root: &Path,
+    given: [Option<String>; 2],
+    ask: impl FnMut(&str, &str) -> Result<String>,
+) -> Result<Vec<String>> {
+    let mut done = Vec::new();
+    super::configure(gh, repo, root, given, ask, &mut done).map(|()| done)
+}
+
 fn never_asked(name: &str, _: &str) -> Result<String> {
     panic!("asked for {name}")
 }
@@ -731,12 +743,14 @@ fn the_first_run_sets_the_default_branch_pushes_design_and_creates_the_site() {
     );
 }
 
+/// A site set up for something else is left alone, like an existing ruleset
+/// or `CODEOWNERS`: a line says what it publishes.
 #[test]
-fn a_site_from_another_source_is_moved_to_the_design_branch() {
-    for (build_type, branch, path) in [
-        ("legacy", "26.3", "/"),
-        ("legacy", "design", "/"),
-        ("workflow", "design", "/docs"),
+fn a_site_from_another_source_is_kept() {
+    for (build_type, branch, path, source) in [
+        ("legacy", "26.3", "/", "the `26.3` branch, folder `/`"),
+        ("legacy", "design", "/", "the `design` branch, folder `/`"),
+        ("workflow", "design", "/docs", "a workflow"),
     ] {
         let mut server = Server::new();
         let tmp = checkout();
@@ -753,47 +767,55 @@ fn a_site_from_another_source_is_moved_to_the_design_branch() {
                 .to_string(),
             )
             .create();
-        let update = server
-            .mock("PUT", format!("{REPO}/pages").as_str())
-            .match_body(Matcher::Json(json!({
-                "build_type": "legacy",
-                "source": { "branch": "design", "path": "/docs" },
-            })))
-            .with_status(204)
-            .create();
+        let changes: Vec<_> = ["PUT", "POST"]
+            .map(|m| {
+                server
+                    .mock(m, format!("{REPO}/pages").as_str())
+                    .expect(0)
+                    .create()
+            })
+            .into();
 
         let done = run(&server, &tmp).unwrap();
 
-        update.assert();
-        assert!(
-            done.last().unwrap().starts_with("Set GitHub Pages"),
-            "{done:?}"
+        for mock in &changes {
+            mock.assert();
+        }
+        assert_eq!(
+            done.last().unwrap(),
+            &format!(
+                "Kept GitHub Pages, which publishes {source}: the design page is not published. To publish it, set the source of Pages to the `design` branch, folder `/docs`, in the settings of the repository."
+            ),
         );
     }
 }
 
+/// A Pages site is public on the internet, even when its repository is
+/// private: the design of a private mod is not published.
 #[test]
-fn a_private_repository_without_pages_is_skipped() {
+fn a_private_repository_gets_no_pages_site() {
     let mut server = Server::new();
-    let tmp = checkout();
+    let tmp = checkout_with(&["26.3"], &["design"]);
     let _settled = settled(&mut server, true, "26.3");
-    let _read = server
+    let pages = server
         .mock("GET", format!("{REPO}/pages").as_str())
-        .with_status(404)
+        .expect(0)
         .create();
-    let _create = server
+    let create = server
         .mock("POST", format!("{REPO}/pages").as_str())
-        .with_status(422)
-        .with_body(
-            r#"{"message":"Your current plan does not support GitHub Pages for this repository."}"#,
-        )
+        .expect(0)
         .create();
 
     let done = run(&server, &tmp).unwrap();
 
+    pages.assert();
+    create.assert();
     assert_eq!(
-        done.last().unwrap(),
-        "Skipped GitHub Pages: GitHub needs a paid plan for Pages on this private repository."
+        done[done.len() - 2..],
+        [
+            "Pushed the `design` branch.".to_owned(),
+            "Skipped GitHub Pages: payangar-studio/swift-blades is private, and a Pages site is public on the internet whatever its repository. To publish the design page anyway, set the source of Pages to the `design` branch, folder `/docs`, in the settings of the repository.".into(),
+        ]
     );
 }
 
@@ -838,5 +860,129 @@ fn without_a_design_branch_pages_is_skipped() {
             "Kept the default branch 26.3.".to_owned(),
             "Skipped GitHub Pages: no `design` branch here or on origin.".into(),
         ]
+    );
+}
+
+/// A repository on a branch that names no Minecraft version (`main`, kept by
+/// `mod init` in an existing repository) still gets the rest of setup.
+#[test]
+fn without_a_version_branch_the_rest_of_setup_runs() {
+    let mut server = Server::new();
+    let tmp = checkout_with(&[], &["design"]);
+    git(tmp.path(), &["branch", "-m", "26.3", "main"]);
+    git(tmp.path(), &["push", "--quiet", "origin", "main"]);
+    let _settled = settled(&mut server, false, "main");
+    let changes: Vec<_> = [("PATCH", REPO.to_owned()), ("GET", format!("{REPO}/pages"))]
+        .map(|(m, p)| server.mock(m, p.as_str()).expect(0).create())
+        .into();
+
+    let done = run(&server, &tmp).unwrap();
+
+    for mock in &changes {
+        mock.assert();
+    }
+    assert_eq!(done[0], "Set the variable INFISICAL_URL.");
+    assert_eq!(
+        done.last().unwrap(),
+        "Skipped the default branch and GitHub Pages: no branch named after a Minecraft version (`26.3`) here or on origin."
+    );
+    assert_eq!(
+        git(tmp.origin.path(), &["for-each-ref", "refs/heads/design"]),
+        ""
+    );
+}
+
+/// Setup runs without a terminal: git does not ask for a password, and a
+/// remote it cannot read leaves out only the steps that need it.
+#[test]
+fn an_origin_git_cannot_read_leaves_the_rest_of_setup() {
+    let mut server = Server::new();
+    let tmp = checkout_with(&[], &["design"]);
+    let url = format!("{}/payangar-studio/swift-blades.git", server.url());
+    git(tmp.path(), &["remote", "set-url", "origin", &url]);
+    // No credential helper nor askpass program of the machine answers.
+    git(tmp.path(), &["config", "credential.helper", ""]);
+    git(tmp.path(), &["config", "core.askPass", ""]);
+    let _login = server
+        .mock("GET", Matcher::Regex("/swift-blades.git/".into()))
+        .with_status(401)
+        .with_header("WWW-Authenticate", "Basic realm=\"GitHub\"")
+        .create();
+    let _settled = settled(&mut server, false, "26.3");
+    let default = server.mock("PATCH", REPO).expect(0).create();
+
+    let done = run(&server, &tmp).unwrap();
+
+    default.assert();
+    let last = done.last().unwrap();
+    assert!(
+        last.starts_with(
+            "Skipped the default branch and GitHub Pages: could not read the branches of origin:"
+        ),
+        "{done:?}"
+    );
+    assert!(last.contains("terminal prompts disabled"), "{last}");
+}
+
+/// A failed step keeps the lines of the steps before it, among them the
+/// reminder to commit `CODEOWNERS`.
+#[test]
+fn a_failed_step_keeps_what_the_steps_before_it_did() {
+    let mut server = Server::new();
+    let tmp = checkout_with(&["26.3"], &["design"]);
+    let nowhere = tmp.path().join("nowhere.git");
+    git(
+        tmp.path(),
+        &["config", "remote.origin.pushurl", nowhere.to_str().unwrap()],
+    );
+    let _settled = settled(&mut server, false, "26.3");
+    let mut done = Vec::new();
+
+    let err = super::configure(
+        &client(&server),
+        &repo(),
+        tmp.path(),
+        [Some("u".into()), Some("i".into())],
+        never_asked,
+        &mut done,
+    )
+    .unwrap_err();
+
+    assert!(err.to_string().contains("could not push"), "{err}");
+    assert_eq!(
+        done,
+        [
+            "Set the variable INFISICAL_URL.".to_owned(),
+            "Set the variable INFISICAL_IDENTITY_ID.".into(),
+            "Kept the ruleset `Release tags`.".into(),
+            "Wrote .github/CODEOWNERS with @maintainer as the owner of the workflows: commit it."
+                .into(),
+            "Kept the default branch 26.3.".into(),
+        ]
+    );
+}
+
+/// Without `html_url` in the answer, the line has no URL rather than a
+/// relative one.
+#[test]
+fn a_site_without_its_url_is_reported_without_one() {
+    let mut server = Server::new();
+    let tmp = checkout();
+    let _settled = settled(&mut server, false, "26.3");
+    let _read = server
+        .mock("GET", format!("{REPO}/pages").as_str())
+        .with_status(404)
+        .create();
+    let _create = server
+        .mock("POST", format!("{REPO}/pages").as_str())
+        .with_status(201)
+        .with_body("{}")
+        .create();
+
+    let done = run(&server, &tmp).unwrap();
+
+    assert_eq!(
+        done.last().unwrap(),
+        "Set GitHub Pages to the `design` branch, folder `/docs` (built within a few minutes)."
     );
 }

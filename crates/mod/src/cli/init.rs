@@ -170,6 +170,11 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
             design::BRANCH
         ),
         design::Branch::Exists => println!("Kept the existing `{}` branch.", design::BRANCH),
+        design::Branch::Clash(names) => println!(
+            "Could not create the `{0}` branch: git cannot have it beside the branches under `{0}/` ({1}). Rename them, then create `{0}` as the `mod-design` skill says.",
+            design::BRANCH,
+            names.join(", ")
+        ),
     }
     println!(
         "Once the repository is on GitHub and the {minecraft} branch is pushed, run `mod setup`: it protects the release tags, sets the vault variables, makes {minecraft} the default branch, pushes `{}` and publishes it with GitHub Pages.",

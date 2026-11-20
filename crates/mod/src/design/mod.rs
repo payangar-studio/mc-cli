@@ -52,28 +52,48 @@ pub fn files(module: &ModToml) -> Vec<File> {
 }
 
 /// What [`create_branch`] did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Branch {
     Created,
     /// A `design` branch exists already, locally or on a remote: kept.
     Exists,
+    /// Local branches under `design/` (named here) take the name: git cannot
+    /// create `design` beside them.
+    Clash(Vec<String>),
 }
 
 /// Creates the orphan `design` branch of `module` in the repository `root`,
 /// unless one exists locally or on a remote. Needs a git identity to commit.
 pub fn create_branch(root: &Path, module: &ModToml) -> Result<Branch> {
-    let existing = git(
+    let refs = git(
         root,
         &[
             "for-each-ref",
             "--format=%(refname)",
-            &format!("refs/heads/{BRANCH}"),
-            &format!("refs/remotes/*/{BRANCH}"),
+            "refs/heads",
+            "refs/remotes",
         ],
         None,
     )?;
-    if !existing.is_empty() {
+    // A pattern of for-each-ref also matches the refs under it
+    // (`refs/heads/design/ideas`): the names are compared whole.
+    let exists = refs.lines().any(|r| {
+        r.strip_prefix("refs/heads/") == Some(BRANCH)
+            || r.strip_prefix("refs/remotes/")
+                .and_then(|r| r.split_once('/'))
+                .is_some_and(|(_, branch)| branch == BRANCH)
+    });
+    if exists {
         return Ok(Branch::Exists);
+    }
+    let clash: Vec<String> = refs
+        .lines()
+        .filter_map(|r| r.strip_prefix("refs/heads/"))
+        .filter(|r| r.strip_prefix(BRANCH).is_some_and(|r| r.starts_with('/')))
+        .map(str::to_owned)
+        .collect();
+    if !clash.is_empty() {
+        return Ok(Branch::Clash(clash));
     }
     let tree = write_tree(root, &files(module))?;
     let message = format!("docs: start the design of {}", module.name);

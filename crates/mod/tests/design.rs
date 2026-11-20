@@ -123,6 +123,29 @@ fn init_keeps_an_existing_design_branch() {
     assert_eq!(git(root, &["rev-parse", "design"]), before);
 }
 
+/// Git cannot create `design` beside `design/...` branches: init names them,
+/// rather than claiming a `design` branch that does not exist.
+#[test]
+fn init_names_the_branches_that_take_the_design_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    git(root, &["init", "--quiet", "--initial-branch=26.3"]);
+    git(root, &["checkout", "--quiet", "--orphan", "design/ideas"]);
+    git(root, &["commit", "--quiet", "--allow-empty", "-m", "ideas"]);
+    git(root, &["checkout", "--quiet", "--orphan", "26.3"]);
+
+    bin(root)
+        .arg("init")
+        .args(INIT_ARGS)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Kept the existing").not())
+        .stdout(predicate::str::contains(
+            "Could not create the `design` branch: git cannot have it beside the branches under `design/` (design/ideas)",
+        ));
+    assert!(root.join(".mod/socle.toml").exists());
+}
+
 /// Without a git identity the branch cannot be committed: init stops before
 /// the socle, so that it resumes once the identity is set.
 #[test]

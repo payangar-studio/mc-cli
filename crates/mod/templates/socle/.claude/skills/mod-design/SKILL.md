@@ -22,6 +22,14 @@ The branch is checked out apart from the code. Find a worktree of it with
 `git worktree add ../<repository>-design design`. Work there, and never merge
 `design` into a version branch or the other way round.
 
+`mod init` creates the branch. When there is none, here or on `origin`
+(`git branch -a --list design '*/design'` lists nothing), create it as an
+orphan: `git worktree add --orphan -b design ../<repository>-design`. Then
+add an empty `docs/.nojekyll` and the documents of `docs/design/`, starting
+with `00-overview.md` (sections Mechanics, Blocks and items, Config, Sides,
+Open questions), and build the page from them. Git refuses `design` beside
+branches named `design/...`: rename those first.
+
 ## What the page is made of
 
 A page is looked at, not read. Someone opens it between two things and must

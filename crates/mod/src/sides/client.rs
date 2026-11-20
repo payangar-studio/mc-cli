@@ -11,11 +11,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use mc_core::fetch::Fetch;
 use mc_core::server::loader::NEOFORGE_MAVEN;
 use mc_core::server::{Step, download, io_err, run};
+
+use super::download_beside;
 
 /// The pinned HeadlessMC release: 3.0.0 is still a release candidate, and
 /// RC9 breaks compatibility with RC8.
@@ -24,6 +27,24 @@ pub const HEADLESSMC_VERSION: &str = "3.0.0-RC9";
 const HEADLESSMC_SHA256: &str = "a343a7c51e48c566a5cd408bd0012ddf091ea105ecc31daff00af600d3a7218a";
 /// How long a stopped client gets before it is killed.
 const STOP_GRACE: Duration = Duration::from_secs(30);
+/// How long a killed client gets to be gone.
+const KILL_WAIT: Duration = Duration::from_secs(10);
+
+/// The process groups of the clients still running, for [`kill_running`].
+static RUNNING: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+
+fn running() -> MutexGuard<'static, Vec<u32>> {
+    RUNNING.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Kills every client still running, for a run that is interrupted: in their
+/// own process group, Ctrl-C does not reach them, and a vanilla client never
+/// quits by itself.
+pub fn kill_running() {
+    for group in running().drain(..) {
+        signal_group(group, "KILL");
+    }
+}
 
 /// The client to launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,21 +72,21 @@ impl Launcher {
         let jar = dir.join("headlessmc.jar");
         if !sha256_matches(&jar)? {
             fs::create_dir_all(&dir).map_err(io_err("creating", &dir))?;
-            let partial = dir.join("headlessmc.jar.part");
-            download(
+            let partial = download_beside(
                 fetch,
                 &format!(
                     "https://github.com/headlesshq/headlessmc/releases/download/{HEADLESSMC_VERSION}/headlessmc.jar"
                 ),
-                &partial,
+                &jar,
             )?;
             if !sha256_matches(&partial)? {
-                let _ = fs::remove_file(&partial);
                 return Err(format!(
                     "the downloaded headlessmc.jar {HEADLESSMC_VERSION} does not have its published SHA-256"
                 ));
             }
-            fs::rename(&partial, &jar).map_err(io_err("writing", &jar))?;
+            partial
+                .persist(&jar)
+                .map_err(|e| io_err("writing", &jar)(e.error))?;
         }
         Ok(Self {
             java: java.to_owned(),
@@ -89,12 +110,27 @@ impl Launcher {
             Flavour::NeoForge { version } => {
                 let id = format!("neoforge-{version}");
                 let installed = self.minecraft_dir.join("versions").join(&id);
-                if !installed.join(format!("{id}.json")).is_file() {
-                    self.install_neoforge(version, fetch)?;
+                let is_installed = || installed.join(format!("{id}.json")).is_file();
+                if !is_installed() {
+                    // Runs sharing the Minecraft directory install one at a time.
+                    let _lock = self.lock("neoforge-install")?;
+                    if !is_installed() {
+                        self.install_neoforge(version, fetch)?;
+                    }
                 }
                 vec![id]
             }
         })
+    }
+
+    /// Holds the lock `name` of the shared Minecraft directory until dropped.
+    fn lock(&self, name: &str) -> Step<fs::File> {
+        let dir = &self.minecraft_dir;
+        fs::create_dir_all(dir).map_err(io_err("creating", dir))?;
+        let path = dir.join(format!(".{name}.lock"));
+        let file = fs::File::create(&path).map_err(io_err("creating", &path))?;
+        file.lock().map_err(io_err("locking", &path))?;
+        Ok(file)
     }
 
     fn install_neoforge(&self, version: &str, fetch: &dyn Fetch) -> Step<()> {
@@ -105,7 +141,14 @@ impl Launcher {
         if !profiles.is_file() {
             fs::write(&profiles, "{\"profiles\":{}}\n").map_err(io_err("writing", &profiles))?;
         }
-        let installer = dir.join(format!("neoforge-{version}-installer.jar"));
+        // The installer under its own name, in a directory of this run.
+        let staging = tempfile::Builder::new()
+            .prefix(".neoforge-installer-")
+            .tempdir_in(dir)
+            .map_err(io_err("creating a directory in", dir))?;
+        let installer = staging
+            .path()
+            .join(format!("neoforge-{version}-installer.jar"));
         download(
             fetch,
             &format!("{NEOFORGE_MAVEN}/{version}/neoforge-{version}-installer.jar"),
@@ -120,7 +163,7 @@ impl Launcher {
             .current_dir(dir)
             .output()
             .map_err(|e| format!("cannot run Java (`{}`): {e}", self.java.display()))?;
-        let _ = fs::remove_file(&installer);
+        drop(staging);
         if output.status.success() {
             return Ok(());
         }
@@ -198,6 +241,8 @@ pub struct Game {
     child: Child,
     log: PathBuf,
     stopped: bool,
+    /// How long the client gets to stop before it is killed.
+    grace: Duration,
 }
 
 impl Game {
@@ -211,10 +256,12 @@ impl Game {
         let child = command
             .spawn()
             .map_err(|e| format!("cannot start HeadlessMC: {e}"))?;
+        running().push(child.id());
         Ok(Game {
             child,
             log: log.to_owned(),
             stopped: false,
+            grace: STOP_GRACE,
         })
     }
 
@@ -250,29 +297,44 @@ impl Game {
 
     /// Stops the client. A vanilla client cannot quit by itself: SIGTERM to
     /// the process group stops HeadlessMC and the game it started, which then
-    /// leaves the server as a player who quits; SIGKILL after a grace period.
+    /// leaves the server as a player who quits. The game can outlive
+    /// HeadlessMC: what is left of the group is killed after a grace period.
     pub fn stop(&mut self) {
         if self.stopped {
             return;
         }
         self.stopped = true;
-        if self.exited().is_some() {
-            return;
+        let group = self.child.id();
+        if !self.group_gone_within(Duration::ZERO) {
+            signal_group(group, "TERM");
+            if !self.group_gone_within(self.grace) {
+                tracing::warn!(
+                    "the client did not stop within {}s, killed",
+                    self.grace.as_secs()
+                );
+                signal_group(group, "KILL");
+                if !self.group_gone_within(KILL_WAIT) {
+                    tracing::warn!("the client's process group {group} still runs after SIGKILL");
+                }
+            }
         }
-        signal_group(self.child.id(), "TERM");
-        let deadline = Instant::now() + STOP_GRACE;
-        while Instant::now() < deadline {
-            if self.exited().is_some() {
-                return;
+        running().retain(|g| *g != group);
+    }
+
+    /// Whether every process of the client's group is gone within `timeout`.
+    fn group_gone_within(&mut self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            // HeadlessMC, once reaped, no longer counts in its group.
+            let _ = self.child.try_wait();
+            if !signal_group(self.child.id(), "0") {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
             }
             std::thread::sleep(Duration::from_millis(200));
         }
-        tracing::warn!(
-            "the client did not stop within {}s, killed",
-            STOP_GRACE.as_secs()
-        );
-        signal_group(self.child.id(), "KILL");
-        let _ = self.child.wait();
     }
 }
 
@@ -296,13 +358,16 @@ fn crash(output: &str) -> Option<String> {
     })
 }
 
-/// Sends `signal` to the process group `group`.
-fn signal_group(group: u32, signal: &str) {
-    let _ = Command::new("kill")
+/// Sends `signal` to the process group `group`; `0` checks that the group
+/// still has a process. Whether it reached one.
+fn signal_group(group: u32, signal: &str) -> bool {
+    Command::new("kill")
         .arg(format!("-{signal}"))
         .arg("--")
         .arg(format!("-{group}"))
-        .status();
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 /// Whether `path` is the pinned HeadlessMC jar.
@@ -376,6 +441,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_crashed_client_that_keeps_running_has_failed() {
+        let _games = serial();
         let dir = tempfile::tempdir().unwrap();
         let log = dir.path().join("client.log");
         let mut command = Command::new("sh");
@@ -404,6 +470,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_client_that_exits_without_crash_report_has_failed() {
+        let _games = serial();
         let dir = tempfile::tempdir().unwrap();
         let log = dir.path().join("client.log");
         let mut command = Command::new("sh");
@@ -418,6 +485,84 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         };
         assert_eq!(failure, "the client exited (exit status: 1)");
+    }
+
+    /// Serializes the tests that launch clients: [`kill_running`] kills
+    /// every client of the process.
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        static GAMES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        GAMES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Whether the process `pid` still runs.
+    #[cfg(unix)]
+    fn alive(pid: &str) -> bool {
+        Command::new("kill")
+            .args(["-0", pid])
+            .stderr(Stdio::null())
+            .status()
+            .unwrap()
+            .success()
+    }
+
+    /// A client that runs `script`, which writes the pid of a process of its
+    /// group to the file `pid` in `dir`, with a short grace period. Returns
+    /// that pid once written.
+    #[cfg(unix)]
+    fn game_with_a_process(dir: &Path, script: &str) -> (Game, String) {
+        let mut command = Command::new("sh");
+        command.arg("-c").arg(script).current_dir(dir);
+        let mut game = Game::spawn(command, &dir.join("client.log")).unwrap();
+        game.grace = Duration::from_secs(1);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let pid = loop {
+            if let Some(pid) = fs::read_to_string(dir.join("pid"))
+                .ok()
+                .filter(|p| p.ends_with('\n'))
+            {
+                break pid.trim().to_owned();
+            }
+            assert!(Instant::now() < deadline, "no pid written");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        (game, pid)
+    }
+
+    /// An interrupted run kills the clients it launched, which Ctrl-C does
+    /// not reach in their own process group.
+    #[cfg(unix)]
+    #[test]
+    fn an_interrupted_run_kills_its_clients() {
+        let _games = serial();
+        let dir = tempfile::tempdir().unwrap();
+        let (mut game, pid) = game_with_a_process(dir.path(), "sleep 60 & echo $! > pid; wait");
+        kill_running();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while alive(&pid) || game.exited().is_none() {
+            assert!(Instant::now() < deadline, "the client still runs");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// HeadlessMC exits on SIGTERM while the game it started ignores it: the
+    /// game is killed with the group.
+    #[cfg(unix)]
+    #[test]
+    fn stopping_kills_the_game_that_outlives_headlessmc() {
+        let _games = serial();
+        let dir = tempfile::tempdir().unwrap();
+        let (mut game, pid) = game_with_a_process(
+            dir.path(),
+            "sh -c 'trap \"\" TERM; while :; do sleep 0.1; done' & echo $! > pid; wait",
+        );
+        game.stop();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while alive(&pid) {
+            assert!(Instant::now() < deadline, "the game still runs");
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 
     #[test]

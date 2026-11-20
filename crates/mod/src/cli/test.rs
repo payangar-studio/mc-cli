@@ -13,8 +13,8 @@ use crate::context::Context;
 use crate::error::{Error, Result};
 use crate::model::mod_toml::{Loader, ModToml};
 use crate::model::socle::SocleConfig;
-use crate::sides::client::Launcher;
-use crate::sides::matrix::{self, Case};
+use crate::sides::client::{self, Launcher};
+use crate::sides::matrix::{self, Case, Client};
 use crate::sides::{self, RUNS_DIR, Setup};
 use crate::socle::SOCLE;
 
@@ -56,8 +56,18 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
         .parent()
         .expect("the server cache is under the CLI's cache")
         .to_owned();
-    let launcher =
-        Launcher::install(&machine.java, &versions.minecraft, &cache, &http).map_err(failed)?;
+    let launcher = if cases.iter().any(|c| c.client != Client::None) {
+        // The clients run in their own process group, out of reach of Ctrl-C.
+        if let Err(e) = ctrlc::set_handler(|| {
+            client::kill_running();
+            std::process::exit(130);
+        }) {
+            tracing::warn!("an interrupted run will leave its client running: {e}");
+        }
+        Some(Launcher::install(&machine.java, &versions.minecraft, &cache, &http).map_err(failed)?)
+    } else {
+        None
+    };
 
     let mut failures = Vec::new();
     for loader in loaders {
@@ -72,7 +82,7 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
             mods,
             machine: &machine,
             java_major,
-            launcher: &launcher,
+            launcher: launcher.as_ref(),
             stay: Duration::from_millis(u64::from(args.ticks) * 50),
             runs: root.join(RUNS_DIR).join(loader.as_str()),
         };
@@ -162,6 +172,7 @@ fn build(root: &Path, loaders: &[Loader]) -> Result<()> {
     tracing::info!(?tasks, "building the mod");
     let status = Command::new(root.join(wrapper))
         .arg("--console=plain")
+        .arg(format!("-Pversion={}", sides::BUILD_VERSION))
         .args(&tasks)
         .current_dir(root)
         .stdout(Stdio::from(std::io::stderr()))

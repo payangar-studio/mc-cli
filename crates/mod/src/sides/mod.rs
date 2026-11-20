@@ -38,6 +38,9 @@ const JOIN_TIMEOUT: Duration = Duration::from_secs(600);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 /// Where the runs of the matrix write, under the repository.
 pub const RUNS_DIR: &str = "runs/sides";
+/// The version the matrix builds the mod at (`-Pversion`), which names the
+/// jar under test: a jar of another version left in `build/libs` is not it.
+pub const BUILD_VERSION: &str = "0.0.0";
 
 /// What every case of a loader shares.
 pub struct Setup<'a> {
@@ -48,7 +51,8 @@ pub struct Setup<'a> {
     pub mods: Vec<PathBuf>,
     pub machine: &'a Machine<'a>,
     pub java_major: u32,
-    pub launcher: &'a Launcher,
+    /// HeadlessMC, when a case launches a client.
+    pub launcher: Option<&'a Launcher>,
     /// How long a client stays before the check that it is still there.
     pub stay: Duration,
     /// The directory of this loader's runs.
@@ -114,11 +118,9 @@ pub fn run_case(setup: &Setup<'_>, case: &Case, fetch: &dyn Fetch) -> Step<()> {
         .args(setup.server_loader().launch_args(&pack))
         .current_dir(run.path());
     tracing::info!(loader = %setup.loader, case = case.name, "starting the server");
-    let mut server = Running::start(command)?;
+    let mut server = Running::start(command, Some(&dir.join("server.log")))?;
     let result = play(setup, case, &mut server, port, &dir, fetch);
     server.stop();
-    let log = dir.join("server.log");
-    fs::write(&log, server.log().join("\n")).map_err(io_err("writing", &log))?;
     result
 }
 
@@ -132,10 +134,14 @@ fn play(
     fetch: &dyn Fetch,
 ) -> Step<()> {
     let id = &setup.module.id;
+    let mut listed = false;
     server
-        .wait_for(SERVER_TIMEOUT, is_done)
+        .wait_for(SERVER_TIMEOUT, |l| {
+            listed |= lists_mod(l, id);
+            is_done(l)
+        })
         .map_err(|wait| server_failed(server, &wait, "reaching `Done`"))?;
-    if case.server_loads_mod && !server.log().iter().any(|l| lists_mod(l, id)) {
+    if case.server_loads_mod && !listed {
         return Err(format!(
             "the server did not load the mod `{id}`; last lines of its log:\n{}",
             server.tail()
@@ -153,13 +159,16 @@ fn play(
         Client::Vanilla => Flavour::Vanilla,
         Client::Modded => setup.modded_client(),
     };
-    let target = setup.launcher.target(&flavour, fetch)?;
+    let launcher = setup
+        .launcher
+        .ok_or("the case launches a client, but HeadlessMC was not installed")?;
+    let target = launcher.target(&flavour, fetch)?;
     let game_dir = dir.join("client");
     if case.client == Client::Modded {
         copy_mods(&game_dir.join("mods"), &setup.mods)?;
     }
     tracing::info!(loader = %setup.loader, case = case.name, ?target, "launching the client");
-    let mut game = setup.launcher.launch(
+    let mut game = launcher.launch(
         &target,
         &game_dir,
         &dir.join("headlessmc"),
@@ -361,8 +370,7 @@ fn fabric_api(version: &str, cache: &Path, fetch: &dyn Fetch) -> Step<PathBuf> {
     let url = format!(
         "https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/{version}/fabric-api-{version}.jar"
     );
-    let partial = dir.join(format!("fabric-api-{version}.jar.part"));
-    download(fetch, &url, &partial)?;
+    let partial = download_beside(fetch, &url, &jar)?;
     let mut expected = String::new();
     fetch
         .get(&format!("{url}.sha1"))
@@ -371,39 +379,39 @@ fn fabric_api(version: &str, cache: &Path, fetch: &dyn Fetch) -> Step<PathBuf> {
         .map_err(|e| format!("cannot read {url}.sha1: {e}"))?;
     let got = mc_core::hash::hash_file(&partial).map_err(io_err("reading", &partial))?;
     if got.sha1 != expected.trim() {
-        let _ = fs::remove_file(&partial);
         return Err(format!("{url} does not match its published SHA-1"));
     }
-    fs::rename(&partial, &jar).map_err(io_err("writing", &jar))?;
+    partial
+        .persist(&jar)
+        .map_err(|e| io_err("writing", &jar)(e.error))?;
     Ok(jar)
 }
 
-/// The mod's jar built for `loader`: `<loader>/build/libs/<id>-<loader>-<version>.jar`,
-/// the most recent one when several versions were built.
+/// Downloads `url` into a file of its own in the directory of `to`, removed
+/// when dropped unless persisted to `to`: runs sharing the machine cache never
+/// write the same file.
+pub fn download_beside(fetch: &dyn Fetch, url: &str, to: &Path) -> Step<tempfile::TempPath> {
+    let dir = to.parent().ok_or("a download has no directory")?;
+    let partial = tempfile::Builder::new()
+        .prefix(".download-")
+        .tempfile_in(dir)
+        .map_err(io_err("creating a file in", dir))?
+        .into_temp_path();
+    download(fetch, url, &partial)?;
+    Ok(partial)
+}
+
+/// The mod's jar built for `loader` at [`BUILD_VERSION`]:
+/// `<loader>/build/libs/<id>-<loader>-<version>.jar`.
 pub fn mod_jar(root: &Path, id: &str, loader: Loader) -> Step<PathBuf> {
-    let libs = root.join(loader.as_str()).join("build/libs");
-    let prefix = format!("{id}-{loader}-");
-    let entries = fs::read_dir(&libs).map_err(io_err("reading", &libs))?;
-    let mut jars = Vec::new();
-    for entry in entries {
-        let path = entry.map_err(io_err("reading", &libs))?.path();
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        let classified = ["-sources.jar", "-javadoc.jar", "-gametest.jar", "-dev.jar"]
-            .iter()
-            .any(|c| name.ends_with(c));
-        if name.starts_with(&prefix) && name.ends_with(".jar") && !classified {
-            let modified = fs::metadata(&path)
-                .and_then(|m| m.modified())
-                .map_err(io_err("reading", &path))?;
-            jars.push((modified, path));
-        }
+    let jar = root
+        .join(loader.as_str())
+        .join("build/libs")
+        .join(format!("{id}-{loader}-{BUILD_VERSION}.jar"));
+    if !jar.is_file() {
+        return Err(format!("the build made no {}", jar.display()));
     }
-    jars.sort();
-    jars.pop()
-        .map(|(_, path)| path)
-        .ok_or_else(|| format!("no {prefix}<version>.jar in {}", libs.display()))
+    Ok(jar)
 }
 
 #[cfg(test)]
@@ -473,14 +481,15 @@ mod tests {
     }
 
     #[test]
-    fn the_most_recent_unclassified_jar_is_the_mod() {
+    fn the_jar_of_the_build_version_is_the_mod() {
         let root = tempfile::tempdir().unwrap();
         let libs = root.path().join("fabric/build/libs");
         fs::create_dir_all(&libs).unwrap();
         for name in [
             "swift_blades-fabric-0.0.0-sources.jar",
-            "swift_blades-fabric-0.0.0-gametest.jar",
             "swift_blades-fabric-0.0.0.jar",
+            // A publication's jar, newer.
+            "swift_blades-fabric-1.2.0.jar",
         ] {
             fs::write(libs.join(name), "").unwrap();
         }
@@ -489,7 +498,7 @@ mod tests {
             libs.join("swift_blades-fabric-0.0.0.jar")
         );
         let missing = mod_jar(root.path(), "swift_blades", Loader::Neoforge).unwrap_err();
-        assert!(missing.starts_with("reading"), "{missing}");
+        assert!(missing.starts_with("the build made no "), "{missing}");
     }
 
     #[test]

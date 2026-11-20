@@ -1,23 +1,28 @@
 //! Running a server until its log says `Done`, then stopping it.
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::collections::VecDeque;
+use std::fs::File;
+use std::io::{BufRead, BufReader, LineWriter, Read, Write};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::Step;
+use super::{Step, io_err};
 
 /// How many log lines a failure shows.
 const TAIL: usize = 20;
 /// How long a server gets to stop after `stop` before it is killed.
 const STOP_GRACE: Duration = Duration::from_secs(60);
+/// How long a stopped server's log is still read.
+const DRAIN: Duration = Duration::from_secs(5);
 
 /// Starts `command`, waits for the `Done` line of the log, then sends `stop`.
 /// Fails when the process exits first or `timeout` passes, with the last
 /// lines of the log.
 pub fn until_done(command: Command, timeout: Duration) -> Step<()> {
-    let mut server = Running::start(command)?;
+    let mut server = Running::start(command, None)?;
     match server.wait_for(timeout, is_done) {
         Ok(_) => {
             server.stop();
@@ -49,14 +54,25 @@ pub enum Wait {
 pub struct Running {
     child: Child,
     lines: mpsc::Receiver<String>,
-    log: Vec<String>,
+    /// The last lines read.
+    tail: VecDeque<String>,
+    /// Where every line read goes, if anywhere.
+    file: Option<(LineWriter<File>, String)>,
     stopped: bool,
 }
 
 impl Running {
     /// Starts `command`, its console on stdin and its log read from stdout
-    /// and stderr.
-    pub fn start(mut command: Command) -> Step<Self> {
+    /// and stderr. Every line read is also written to the file `log`, when
+    /// given; only the last ones are kept in memory.
+    pub fn start(mut command: Command, log: Option<&Path>) -> Step<Self> {
+        let file = match log {
+            Some(path) => Some((
+                LineWriter::new(File::create(path).map_err(io_err("creating", path))?),
+                path.display().to_string(),
+            )),
+            None => None,
+        };
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -86,9 +102,25 @@ impl Running {
         Ok(Self {
             child,
             lines,
-            log: Vec::new(),
+            tail: VecDeque::with_capacity(TAIL),
+            file,
             stopped: false,
         })
+    }
+
+    /// Keeps `line` in the tail and writes it to the log file. A log file
+    /// that cannot be written is given up, the run goes on.
+    fn keep(&mut self, line: String) {
+        if let Some((file, path)) = &mut self.file
+            && let Err(e) = writeln!(file, "{line}")
+        {
+            tracing::warn!("cannot write the server log {path}: {e}");
+            self.file = None;
+        }
+        if self.tail.len() == TAIL {
+            self.tail.pop_front();
+        }
+        self.tail.push_back(line);
     }
 
     /// Waits up to `timeout` for a line of the log for which `found` is true,
@@ -96,7 +128,7 @@ impl Running {
     pub fn wait_for(
         &mut self,
         timeout: Duration,
-        found: impl Fn(&str) -> bool,
+        mut found: impl FnMut(&str) -> bool,
     ) -> Result<String, Wait> {
         let deadline = Instant::now() + timeout;
         loop {
@@ -106,11 +138,11 @@ impl Running {
             {
                 Ok(line) => {
                     tracing::debug!(target: "server", "{line}");
-                    let hit = found(&line);
-                    self.log.push(line);
-                    if hit {
-                        return Ok(self.log.last().cloned().unwrap_or_default());
+                    if found(&line) {
+                        self.keep(line.clone());
+                        return Ok(line);
                     }
+                    self.keep(line);
                 }
                 Err(RecvTimeoutError::Timeout) => return Err(Wait::Timeout),
                 Err(RecvTimeoutError::Disconnected) => {
@@ -138,14 +170,9 @@ impl Running {
             .map_err(|e| format!("cannot send `{command}` to the server: {e}"))
     }
 
-    /// Every line of the log read so far.
-    pub fn log(&self) -> &[String] {
-        &self.log
-    }
-
     /// The last lines of the log read so far.
     pub fn tail(&self) -> String {
-        self.log[self.log.len().saturating_sub(TAIL)..].join("\n")
+        self.tail.iter().cloned().collect::<Vec<_>>().join("\n")
     }
 
     /// Sends `stop` and waits for the process to exit, killing it after a
@@ -156,9 +183,13 @@ impl Running {
         }
         self.stopped = true;
         stop(&mut self.child);
-        // What the server logged while stopping.
-        while let Ok(line) = self.lines.recv_timeout(Duration::from_millis(100)) {
-            self.log.push(line);
+        // What the server logged while stopping, unless something it left
+        // behind keeps logging.
+        let deadline = Instant::now() + DRAIN;
+        while Instant::now() < deadline
+            && let Ok(line) = self.lines.recv_timeout(Duration::from_millis(100))
+        {
+            self.keep(line);
         }
     }
 }
@@ -266,7 +297,9 @@ mod tests {
         let script = format!(
             "{DONE}; while read cmd; do echo \"got $cmd\"; [ \"$cmd\" = stop ] && exit 0; done"
         );
-        let mut server = Running::start(fake(&script)).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("server.log");
+        let mut server = Running::start(fake(&script), Some(&log)).unwrap();
         let done = server.wait_for(Duration::from_secs(20), is_done).unwrap();
         assert!(done.contains("Done ("), "{done}");
         server.send("list").unwrap();
@@ -275,16 +308,14 @@ mod tests {
             .unwrap();
         assert_eq!(got, "got list");
         server.stop();
-        assert!(
-            server.log().iter().any(|l| l == "got stop"),
-            "{:?}",
-            server.log()
-        );
+        let text = std::fs::read_to_string(&log).unwrap();
+        assert!(text.ends_with("got list\ngot stop\n"), "{text}");
+        assert!(text.contains("Done ("), "{text}");
     }
 
     #[test]
     fn waiting_ends_when_the_server_exits_or_the_time_runs_out() {
-        let mut server = Running::start(fake("echo one; exec sleep 30")).unwrap();
+        let mut server = Running::start(fake("echo one; exec sleep 30"), None).unwrap();
         let started = Instant::now();
         assert_eq!(
             server.wait_for(Duration::from_secs(1), |l| l == "two"),
@@ -294,11 +325,51 @@ mod tests {
         assert_eq!(server.tail(), "one");
         drop(server);
 
-        let mut server = Running::start(fake("echo one; exit 4")).unwrap();
+        let mut server = Running::start(fake("echo one; exit 4"), None).unwrap();
         match server.wait_for(Duration::from_secs(20), |l| l == "two") {
             Err(Wait::Exited(status)) => assert!(status.contains('4'), "{status}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    /// Memory keeps the last lines only; the log file gets them all.
+    #[test]
+    fn the_log_file_has_every_line_and_memory_the_last_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("server.log");
+        let script = "for i in $(seq 1 30); do echo line $i; done; exec sleep 30";
+        let mut server = Running::start(fake(script), Some(&log)).unwrap();
+        server
+            .wait_for(Duration::from_secs(20), |l| l == "line 30")
+            .unwrap();
+        let tail = server.tail();
+        assert!(
+            tail.starts_with("line 11\n") && tail.ends_with("line 30"),
+            "{tail}"
+        );
+        let text = std::fs::read_to_string(&log).unwrap();
+        assert!(text.starts_with("line 1\nline 2\n"), "{text}");
+        assert!(text.ends_with("line 30\n"), "{text}");
+    }
+
+    /// A process left behind by the server that keeps the log open and
+    /// writing does not hold `stop` forever.
+    #[test]
+    fn stopping_ends_while_something_keeps_logging() {
+        let script =
+            format!("{DONE}; (while :; do echo still; sleep 0.05; done) & read cmd; exit 0");
+        let mut server = Running::start(fake(&script), None).unwrap();
+        server.wait_for(Duration::from_secs(20), is_done).unwrap();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            server.stop();
+            let _ = tx.send(());
+            // Dropping the server closes the log: the writer gets SIGPIPE.
+        });
+        assert!(
+            rx.recv_timeout(Duration::from_secs(30)).is_ok(),
+            "stop still drains the log"
+        );
     }
 
     #[test]

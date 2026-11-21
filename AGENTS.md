@@ -51,6 +51,8 @@ Pushing a `v*` tag builds every binary of the workspace for `x86_64-unknown-linu
 
 Every `uses:` of `.github/` is pinned by full commit SHA with its version in a comment; `scripts/check-workflow-pins.sh` enforces it in CI. A socle's workflow template calls mc-cli's reusable workflows at the release tag of the workspace version instead (`@v<version>`).
 
+Organization policy: a workflow runs only actions pinned by SHA and owned by `payangar-studio`, GitHub, or a third party on the organization's allow-list. A run failing with "not allowed" or "must be pinned" hits that policy: ask an organization owner to allow the action.
+
 ## Harness
 
 - After a finding that could recur beyond the current work (a review, a validation, a human report), ask what in the harness would have prevented it: a check first; otherwise a rule in the closest AGENTS.md; otherwise nothing.

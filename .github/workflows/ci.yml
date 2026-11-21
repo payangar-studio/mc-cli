@@ -74,6 +74,21 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
+      # The dependencies the generated mods download (Maven artifacts and the
+      # Gradle distribution), shared by the jobs that build mods so that a burst
+      # of runs does not get throttled by Maven Central (HTTP 429). The key
+      # changes every day and with what sets those dependencies, so nothing is
+      # kept longer than a day. Gradle's build cache stays out: a later run
+      # would take the test results from it instead of running the tests.
+      - name: Day of the Gradle dependency cache
+        id: gradle-day
+        run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper/dists
+          key: gradle-deps-${{ steps.gradle-day.outputs.day }}-${{ hashFiles('crates/mod/src/versions.rs', 'crates/mod/templates/socle/**/*.gradle*', 'crates/mod/templates/socle/**/*.kt', 'crates/mod/templates/socle/**/*.properties', 'crates/mod/templates/skeleton/*.gradle*') }}
       - name: Install the virtual display and the software renderers
         run: |
           sudo apt-get update
@@ -90,9 +105,7 @@ jobs:
   # the client job of the mod's workflow (templates/socle/.github/workflows).
   # `every_layer_passes` is the end-to-end test of the socle: a mod with both
   # loaders builds and passes every test layer, the shared library's tests
-  # included. The Gradle cache is keyed on what sets the generated mods'
-  # dependencies: the pinned versions and the build files of the socle and
-  # the skeleton.
+  # included.
   mod-tests:
     runs-on: ubuntu-24.04
     # The game servers and clients it starts could hang.
@@ -105,13 +118,15 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-          cache: gradle
-          cache-dependency-path: |
-            crates/mod/src/versions.rs
-            crates/mod/templates/socle/**/*.gradle*
-            crates/mod/templates/socle/**/*.kt
-            crates/mod/templates/socle/**/*.properties
-            crates/mod/templates/skeleton/*.gradle*
+      - name: Day of the Gradle dependency cache
+        id: gradle-day
+        run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper/dists
+          key: gradle-deps-${{ steps.gradle-day.outputs.day }}-${{ hashFiles('crates/mod/src/versions.rs', 'crates/mod/templates/socle/**/*.gradle*', 'crates/mod/templates/socle/**/*.kt', 'crates/mod/templates/socle/**/*.properties', 'crates/mod/templates/skeleton/*.gradle*') }}
       - name: Install the virtual display and the software renderers
         run: |
           sudo apt-get update
@@ -131,11 +146,6 @@ jobs:
           name: mod-tests
           path: ${{ runner.temp }}/mod-tests/
           if-no-files-found: ignore
-      # setup-java saves ~/.gradle/caches after the job. Gradle's build cache
-      # stays out of it: a later run would take the test results from it
-      # instead of running the tests.
-      - name: Drop Gradle's build cache before the cache is saved
-        run: rm -rf ~/.gradle/caches/build-cache-1
 
   # The side matrix of projects made by `mod init` (`mod test`): a dedicated
   # server and a HeadlessMC client with different mod sets, for each side on
@@ -152,6 +162,15 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
+      - name: Day of the Gradle dependency cache
+        id: gradle-day
+        run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper/dists
+          key: gradle-deps-${{ steps.gradle-day.outputs.day }}-${{ hashFiles('crates/mod/src/versions.rs', 'crates/mod/templates/socle/**/*.gradle*', 'crates/mod/templates/socle/**/*.kt', 'crates/mod/templates/socle/**/*.properties', 'crates/mod/templates/skeleton/*.gradle*') }}
       - name: Install the stable Rust toolchain
         run: |
           rustup toolchain install stable --profile minimal --no-self-update
@@ -184,6 +203,15 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
+      - name: Day of the Gradle dependency cache
+        id: gradle-day
+        run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper/dists
+          key: gradle-deps-${{ steps.gradle-day.outputs.day }}-${{ hashFiles('crates/mod/src/versions.rs', 'crates/mod/templates/socle/**/*.gradle*', 'crates/mod/templates/socle/**/*.kt', 'crates/mod/templates/socle/**/*.properties', 'crates/mod/templates/skeleton/*.gradle*') }}
       - name: Install the virtual display and the software renderers
         run: |
           sudo apt-get update

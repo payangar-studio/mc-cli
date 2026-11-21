@@ -20,7 +20,7 @@ The directory at the root of the repository says what the project is:
 | Root holds | Project | CurseForge class | Name when `page.toml` has none |
 |---|---|---|---|
 | `.mod/` | a mod | Mods | `name` in `mod.toml` |
-| `.modpack/` | a modpack | Modpacks | `name` in `.modpack/socle.toml` |
+| `.modpack/` | a modpack | Modpacks | `name` under `[init]` in `.modpack/socle.toml` |
 
 ## What `page/` holds
 

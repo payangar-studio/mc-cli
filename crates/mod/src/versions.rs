@@ -20,7 +20,8 @@ pub struct Pinned {
     pub neoforge: &'static str,
     /// ModDevGradle, as the `net.neoforged.moddev` plugin.
     pub moddevgradle: &'static str,
-    /// Mod Menu, compile-only: the shared library's config screen entrypoint.
+    /// Mod Menu: compiled against for the shared library's config screen
+    /// entrypoint, and loaded by the dev client of `mod run`.
     pub modmenu: &'static str,
     /// mod-publish-plugin, as the `me.modmuss50.mod-publish-plugin` plugin.
     pub mod_publish_plugin: &'static str,

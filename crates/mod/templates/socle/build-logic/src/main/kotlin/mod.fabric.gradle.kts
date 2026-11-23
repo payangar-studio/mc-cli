@@ -68,14 +68,31 @@ dependencies {
 // has it; the mod does not depend on it. Mod Menu is compiled against, and its
 // entrypoint declared, once the library's class is there.
 val modMenuEntrypoint = file("src/client/java/${mod.pkg.replace('.', '/')}/vendor/fabric/ModMenuEntrypoint.java")
-if (modMenuEntrypoint.isFile) {
-    repositories {
-        maven("https://maven.terraformersmc.com/releases/") {
-            content { includeGroup("com.terraformersmc") }
-        }
+repositories {
+    maven("https://maven.terraformersmc.com/releases/") {
+        content { includeGroup("com.terraformersmc") }
     }
+}
+if (modMenuEntrypoint.isFile) {
     dependencies {
         "clientCompileOnly"("com.terraformersmc:modmenu:${pinned.modmenu}")
+    }
+}
+// The dev client (`mod run`) of a mod with a client side loads Mod Menu, so
+// that the config screen opens from the mod list. Its jar carries the Fabric
+// API modules it needs, hence no transitive dependency. Not in the gametests:
+// they see the game without it.
+if (mod.hasClient) {
+    val modMenuRuntime = configurations.create("modMenuRuntime") { isTransitive = false }
+    dependencies {
+        modMenuRuntime("com.terraformersmc:modmenu:${pinned.modmenu}")
+    }
+    extensions.configure<LoomGradleExtensionAPI> {
+        runs.named("client") {
+            systemProperties.put("fabric.addMods", modMenuRuntime.elements.map { files ->
+                files.joinToString(File.pathSeparator) { it.asFile.absolutePath }
+            })
+        }
     }
 }
 

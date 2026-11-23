@@ -413,11 +413,11 @@ fn a_ci_profile_runs_the_fabric_gametests_with_its_mods() {
     );
 }
 
-/// The mods the Fabric client of a plain `mod run` loads, for a mod on
+/// The mods the Fabric client of `mod run <args>` loads, for a mod on
 /// `side`: their lines of the loader's list (`- modmenu 21.0.1`), and the
 /// Mod Menu version `.mod/socle.toml` pins. The client is stopped once it has
 /// logged them.
-fn client_mods(side: &str) -> (Vec<String>, String) {
+fn client_mods(side: &str, args: &[&str]) -> (Vec<String>, String) {
     let (tmp, root) = init(side, &[]);
     let output = tmp.path().join("mod-run.log");
     let out = fs::File::create(&output).unwrap();
@@ -425,6 +425,7 @@ fn client_mods(side: &str) -> (Vec<String>, String) {
         .args(["-a", "-s", "-screen 0 1280x720x24"])
         .arg(cargo_bin("mod"))
         .arg("run")
+        .args(args)
         .current_dir(&root)
         .stdin(Stdio::null())
         .stdout(out.try_clone().unwrap())
@@ -461,7 +462,10 @@ fn client_mods(side: &str) -> (Vec<String>, String) {
     }
     stop(&mut child);
     keep_logs(
-        &format!("modmenu-{side}"),
+        &format!(
+            "modmenu-{side}{}",
+            if args.is_empty() { "" } else { "-asked" }
+        ),
         &[
             (output.clone(), "mod-run.log"),
             (dir.join("logs"), "client-logs"),
@@ -491,7 +495,7 @@ fn client_mods(side: &str) -> (Vec<String>, String) {
 #[test]
 #[ignore = "downloads Gradle, Fabric, Minecraft and Mod Menu; needs Xvfb"]
 fn the_fabric_client_of_a_mod_with_a_client_side_loads_mod_menu() {
-    let (mods, modmenu) = client_mods("both-required");
+    let (mods, modmenu) = client_mods("both-required", &[]);
     assert!(
         mods.iter().any(|l| *l == format!("- modmenu {modmenu}")),
         "Mod Menu {modmenu}, pinned in .mod/socle.toml, was not loaded"
@@ -501,7 +505,7 @@ fn the_fabric_client_of_a_mod_with_a_client_side_loads_mod_menu() {
 #[test]
 #[ignore = "downloads Gradle, Fabric and Minecraft; needs Xvfb"]
 fn the_fabric_client_of_a_server_only_mod_does_without_mod_menu() {
-    let (mods, _) = client_mods("server");
+    let (mods, _) = client_mods("server", &[]);
     assert!(
         mods.iter().any(|l| l.starts_with("- minecraft ")),
         "the mod list was not read"
@@ -509,5 +513,27 @@ fn the_fabric_client_of_a_server_only_mod_does_without_mod_menu() {
     assert!(
         !mods.iter().any(|l| l.starts_with("- modmenu ")),
         "Mod Menu was loaded for a server-only mod"
+    );
+}
+
+/// A Mod Menu the run asks for (`--with`, a profile's mods) is the one loaded,
+/// even older than the pinned one.
+#[test]
+#[ignore = "downloads Gradle, Fabric, Minecraft and Mod Menu; needs Xvfb"]
+fn a_mod_menu_asked_with_with_replaces_the_pinned_one() {
+    let asked = "21.0.0";
+    let (mods, pinned) = client_mods("both-required", &["--with", &format!("modmenu@{asked}")]);
+    assert_ne!(
+        pinned, asked,
+        "the test needs a version other than the pinned one"
+    );
+    let loaded: Vec<&String> = mods
+        .iter()
+        .filter(|l| l.starts_with("- modmenu "))
+        .collect();
+    assert_eq!(
+        loaded,
+        [&format!("- modmenu {asked}")],
+        "Mod Menu {asked}, asked with --with, was not the one loaded"
     );
 }

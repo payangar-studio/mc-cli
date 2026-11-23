@@ -218,6 +218,23 @@ fn every_layer_passes() {
             "{task} did not run"
         );
     }
+    // The dev client gametests see the game without Mod Menu, which only the
+    // client of `mod run` loads: it would change the renders.
+    let client =
+        fs::read_to_string(root.join("fabric/build/run/clientGameTest/logs/latest.log")).unwrap();
+    let mods: Vec<&str> = client
+        .lines()
+        .map(str::trim_start)
+        .filter(|l| l.starts_with("- "))
+        .collect();
+    assert!(
+        mods.iter().any(|l| l.starts_with("- minecraft ")),
+        "the client gametest log lists no mods"
+    );
+    assert!(
+        !mods.iter().any(|l| l.starts_with("- modmenu ")),
+        "Mod Menu was loaded in the client gametests"
+    );
     // The comparison saved the render it took: the CI artifact to promote.
     assert!(
         root.join("fabric/build/run/clientGameTest/screenshots/example_world.png")

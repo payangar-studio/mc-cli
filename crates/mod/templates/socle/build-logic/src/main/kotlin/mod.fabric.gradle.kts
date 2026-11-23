@@ -79,19 +79,27 @@ if (modMenuEntrypoint.isFile) {
     }
 }
 // The dev client (`mod run`) of a mod with a client side loads Mod Menu, so
-// that the config screen opens from the mod list. Its jar carries the Fabric
-// API modules it needs, hence no transitive dependency. Not in the gametests:
-// they see the game without it.
+// that the config screen opens from the mod list, unless its `mods/` already
+// holds one (`--with modmenu@<version>`, a profile's mods): the one asked
+// wins. Its jar carries the Fabric API modules it needs, hence no transitive
+// dependency. Set on the `runClient` task, not on the `client` run, whose
+// settings the gametest runs inherit: they see the game without it. Resolved
+// when the task runs, so that no other task needs Mod Menu's repository.
 if (mod.hasClient) {
-    val modMenuRuntime = configurations.create("modMenuRuntime") { isTransitive = false }
+    val modMenuRuntime = configurations.create("modMenuRuntime") {
+        isCanBeConsumed = false
+        isTransitive = false
+    }
     dependencies {
         modMenuRuntime("com.terraformersmc:modmenu:${pinned.modmenu}")
     }
-    extensions.configure<LoomGradleExtensionAPI> {
-        runs.named("client") {
-            systemProperties.put("fabric.addMods", modMenuRuntime.elements.map { files ->
-                files.joinToString(File.pathSeparator) { it.asFile.absolutePath }
-            })
+    val clientRunDir = the<LoomGradleExtensionAPI>().runs.getByName("client").runDirectory
+    tasks.named<RunGameTask>("runClient") {
+        val jars: FileCollection = modMenuRuntime
+        doFirst {
+            if (!holdsFabricMod(clientRunDir.get().asFile.resolve("mods"), "modmenu")) {
+                systemProperty("fabric.addMods", jars.singleFile.absolutePath)
+            }
         }
     }
 }

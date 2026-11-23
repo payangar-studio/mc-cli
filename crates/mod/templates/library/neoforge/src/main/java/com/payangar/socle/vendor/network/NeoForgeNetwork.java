@@ -39,12 +39,8 @@ public final class NeoForgeNetwork {
             PayloadRegistrar registrar = event.registrar(VERSION).optional();
             registrar.configurationToClient(payloads.presenceType(), payloads.presenceCodec());
             registrar.playToClient(payloads.syncType(), payloads.syncCodec());
-            registrar.playToServer(payloads.changeType(), payloads.changeCodec(), (change, context) -> {
-                if (context.player() instanceof ServerPlayer player) {
-                    config.change(player, change).ifPresent(sync -> sendToAll(player.level().getServer(), sync));
-                }
-            });
         });
+        config.connect(NeoForgeNetwork::sendToAll);
         modBus.addListener(RegisterConfigurationTasksEvent.class, event -> {
             var listener = event.getListener();
             if (SideCheck.refuses(network.side(), listener.hasChannel(payloads.presenceType()))) {

@@ -72,7 +72,8 @@ fn declare_client_gametest(root: &Path, vendor: &str) {
     );
     let gametests = format!(
         "{list}\"{vendor}.gui.ConfigScreenClientGameTest\", \
-         \"{vendor}.network.ConfigSyncClientGameTest\", "
+         \"{vendor}.network.ConfigSyncClientGameTest\", \
+         \"{vendor}.network.ServerSettingsClientGameTest\", "
     );
     let text = text
         .replacen(entrypoints, &test_mod, 1)

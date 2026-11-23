@@ -6,7 +6,7 @@
   "config.scope.client": "Client",
   "config.scope.server": "Server",
   "config.settings": "Settings",
-  "config.read_only": "The server settings are changed in a world, by an operator.",
+  "config.read_only": "Server settings are changed here in single player, and in the server's config file on a server.",
   "config.broken_file": "The settings file could not be read: changes will not be saved.",
   "config.no_match": "No setting matches the search."
 }

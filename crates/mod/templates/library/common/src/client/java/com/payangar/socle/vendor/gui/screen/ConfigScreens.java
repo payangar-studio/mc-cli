@@ -23,6 +23,7 @@ import net.minecraft.client.gui.screens.Screen;
  * ClientSettings settings = ClientSettings.of(MyConfig.SCHEMA);
  * ConfigScreens.register(MyConfig.SCHEMA, settings);                     // the generated screen
  * ConfigScreens.register(MyConfig.SCHEMA, parent -> new MyScreen(parent)); // or a custom one
+ * ConfigScreens.serverSettings(() -> ServerSettings.of(MyMod.NETWORK));   // its server settings
  * }</pre>
  */
 public final class ConfigScreens {
@@ -45,8 +46,9 @@ public final class ConfigScreens {
     }
 
     /**
-     * Where the generated screen takes the server settings from. Without one, they are shown with
-     * their defaults, read-only.
+     * Where the generated screen takes the server settings from, each time it opens: {@code
+     * ServerSettings.of(network)} for a mod with a network. Without one, they are shown with their
+     * defaults, read-only.
      */
     public static synchronized void serverSettings(Supplier<SettingsSource> source) {
         server = source;

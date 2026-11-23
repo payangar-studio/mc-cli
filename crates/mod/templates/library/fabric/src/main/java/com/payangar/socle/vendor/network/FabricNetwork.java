@@ -30,7 +30,6 @@ public final class FabricNetwork {
         ConfigPayloads payloads = network.payloads();
         PayloadTypeRegistry.clientboundConfiguration().register(payloads.presenceType(), payloads.presenceCodec());
         PayloadTypeRegistry.clientboundPlay().register(payloads.syncType(), payloads.syncCodec());
-        PayloadTypeRegistry.serverboundPlay().register(payloads.changeType(), payloads.changeCodec());
 
         ServerConfigurationConnectionEvents.CONFIGURE.register((handler, server) -> {
             boolean hasMod = ServerConfigurationNetworking.canSend(handler, payloads.presenceType());
@@ -43,9 +42,7 @@ public final class FabricNetwork {
                 config.sync().ifPresent(sender::sendPacket);
             }
         });
-        ServerPlayNetworking.registerGlobalReceiver(payloads.changeType(), (change, context) -> config
-                .change(context.player(), change)
-                .ifPresent(sync -> sendToAll(context.server(), sync)));
+        config.connect(FabricNetwork::sendToAll);
     }
 
     /** Sends {@code sync} to every player whose client has the mod. */

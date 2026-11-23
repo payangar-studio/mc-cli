@@ -291,7 +291,9 @@ fn defect_modded_client_crashes() {
             .join(PACKAGE_DIR)
             .join("client/ClientEntrypoint.java"),
         "ConfigScreens.register(CommonEntrypoint.SCHEMA, SETTINGS);",
-        "throw new IllegalStateException(\"deliberate defect\");",
+        // Behind an `if`: a bare `throw` would make the next line unreachable,
+        // which javac refuses.
+        "if (true) throw new IllegalStateException(\"deliberate defect\");",
     );
     fails(
         &root,

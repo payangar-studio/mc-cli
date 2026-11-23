@@ -29,7 +29,7 @@ public final class ModNetwork {
         this.schema = schema;
         this.payloads = new ConfigPayloads(schema.modId());
         this.serverConfig = new ServerConfig(schema, payloads);
-        this.receivedConfig = new ReceivedConfig(schema, payloads);
+        this.receivedConfig = new ReceivedConfig(schema);
     }
 
     public String modId() {

@@ -16,7 +16,8 @@ public final class NetworkTestMod implements ModInitializer {
 
     private static final ConfigSchema.Builder CONFIG = ConfigSchema.builder(MOD_ID, ModSide.BOTH_REQUIRED);
     static final Setting<Integer> RANGE = CONFIG.define(Setting.integer("range", Scope.SERVER, 8, 1, 64));
-    static final ModNetwork NETWORK = new ModNetwork(CONFIG.build());
+    static final ConfigSchema SCHEMA = CONFIG.build();
+    static final ModNetwork NETWORK = new ModNetwork(SCHEMA);
 
     /** The id of a server-only mod, which has server settings and no payloads. */
     static final String SERVER_MOD_ID = "vendor_server_test";

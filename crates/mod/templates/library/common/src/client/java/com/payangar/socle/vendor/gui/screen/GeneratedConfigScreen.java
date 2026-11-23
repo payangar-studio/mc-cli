@@ -25,7 +25,7 @@ import org.slf4j.LoggerFactory;
 /**
  * The config screen drawn from the schema: one tab per scope that has settings, a search over
  * the settings' labels, and a row per setting. The settings of a scope whose source is not
- * editable (server settings for a player who is not an operator) are shown read-only. Settings
+ * editable (server settings anywhere but in single player) are shown read-only. Settings
  * whose file could not be read say that a change will not be saved.
  *
  * <p>A change applies to the values at once; closing the screen saves each scope that changed.

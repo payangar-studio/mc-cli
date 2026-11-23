@@ -75,10 +75,11 @@ jobs:
           distribution: temurin
           java-version: "25"
       # The dependencies the generated mods download (Maven artifacts and the
-      # Gradle distribution), shared by the jobs that build mods so that a burst
-      # of runs does not get throttled by Maven Central (HTTP 429). The key
-      # changes every day and with what sets those dependencies, so nothing is
-      # kept longer than a day. Gradle's build cache stays out: a later run
+      # Gradle distribution), kept between runs so that a burst of runs does not
+      # get throttled by Maven Central (HTTP 429). One cache per job: a cache is
+      # saved once per key, so a shared key would miss what only the other jobs
+      # resolve. The key changes every day and with what sets those
+      # dependencies, so nothing is kept longer than a day. Gradle's build cache stays out: a later run
       # would take the test results from it instead of running the tests.
       - name: Day of the Gradle dependency cache
         id: gradle-day
@@ -88,7 +89,7 @@ jobs:
           path: |
             ~/.gradle/caches/modules-2
             ~/.gradle/wrapper/dists
-          key: gradle-deps-${{ steps.gradle-day.outputs.day }}-${{ hashFiles('crates/mod/src/versions.rs', 'crates/mod/templates/socle/**/*.gradle*', 'crates/mod/templates/socle/**/*.kt', 'crates/mod/templates/socle/**/*.properties', 'crates/mod/templates/skeleton/*.gradle*') }}
+          key: gradle-deps-${{ github.job }}-${{ steps.gradle-day.outputs.day }}-${{ hashFiles('crates/mod/src/versions.rs', 'crates/mod/templates/socle/**/*.gradle*', 'crates/mod/templates/socle/**/*.kt', 'crates/mod/templates/socle/**/*.properties', 'crates/mod/templates/skeleton/*.gradle*') }}
       - name: Install the virtual display and the software renderers
         run: |
           sudo apt-get update
@@ -126,7 +127,7 @@ jobs:
           path: |
             ~/.gradle/caches/modules-2
             ~/.gradle/wrapper/dists
-          key: gradle-deps-${{ steps.gradle-day.outputs.day }}-${{ hashFiles('crates/mod/src/versions.rs', 'crates/mod/templates/socle/**/*.gradle*', 'crates/mod/templates/socle/**/*.kt', 'crates/mod/templates/socle/**/*.properties', 'crates/mod/templates/skeleton/*.gradle*') }}
+          key: gradle-deps-${{ github.job }}-${{ steps.gradle-day.outputs.day }}-${{ hashFiles('crates/mod/src/versions.rs', 'crates/mod/templates/socle/**/*.gradle*', 'crates/mod/templates/socle/**/*.kt', 'crates/mod/templates/socle/**/*.properties', 'crates/mod/templates/skeleton/*.gradle*') }}
       - name: Install the virtual display and the software renderers
         run: |
           sudo apt-get update
@@ -170,7 +171,7 @@ jobs:
           path: |
             ~/.gradle/caches/modules-2
             ~/.gradle/wrapper/dists
-          key: gradle-deps-${{ steps.gradle-day.outputs.day }}-${{ hashFiles('crates/mod/src/versions.rs', 'crates/mod/templates/socle/**/*.gradle*', 'crates/mod/templates/socle/**/*.kt', 'crates/mod/templates/socle/**/*.properties', 'crates/mod/templates/skeleton/*.gradle*') }}
+          key: gradle-deps-${{ github.job }}-${{ steps.gradle-day.outputs.day }}-${{ hashFiles('crates/mod/src/versions.rs', 'crates/mod/templates/socle/**/*.gradle*', 'crates/mod/templates/socle/**/*.kt', 'crates/mod/templates/socle/**/*.properties', 'crates/mod/templates/skeleton/*.gradle*') }}
       - name: Install the stable Rust toolchain
         run: |
           rustup toolchain install stable --profile minimal --no-self-update
@@ -211,7 +212,7 @@ jobs:
           path: |
             ~/.gradle/caches/modules-2
             ~/.gradle/wrapper/dists
-          key: gradle-deps-${{ steps.gradle-day.outputs.day }}-${{ hashFiles('crates/mod/src/versions.rs', 'crates/mod/templates/socle/**/*.gradle*', 'crates/mod/templates/socle/**/*.kt', 'crates/mod/templates/socle/**/*.properties', 'crates/mod/templates/skeleton/*.gradle*') }}
+          key: gradle-deps-${{ github.job }}-${{ steps.gradle-day.outputs.day }}-${{ hashFiles('crates/mod/src/versions.rs', 'crates/mod/templates/socle/**/*.gradle*', 'crates/mod/templates/socle/**/*.kt', 'crates/mod/templates/socle/**/*.properties', 'crates/mod/templates/skeleton/*.gradle*') }}
       - name: Install the virtual display and the software renderers
         run: |
           sudo apt-get update

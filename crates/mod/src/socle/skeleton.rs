@@ -13,10 +13,14 @@
 //!   Fabric ones are named in the generated `fabric.mod.json`
 //!   (`build-logic/src/main/kotlin/ModMetadata.kt`): renaming them breaks it;
 //! - a server-only mod has no client code;
-//! - every mod but a client-only one declares its config schema and the
-//!   shared library's network (`ModNetwork`) in `CommonEntrypoint`, and its
-//!   loaders' entrypoints register it: the side matrix (`mod test`) expects
-//!   the side check of a mod required on both sides;
+//! - every mod declares its config schema in `CommonEntrypoint` (`SCHEMA`),
+//!   and its client entrypoint registers the generated config screen, which
+//!   Mod Menu (Fabric) and the mod list (NeoForge) open; on NeoForge, the
+//!   loader's client entrypoint also hands its mod container to the library;
+//! - every mod but a client-only one declares the shared library's network
+//!   (`ModNetwork`) in `CommonEntrypoint`, and its loaders' entrypoints
+//!   register it: the side matrix (`mod test`) expects the side check of a
+//!   mod required on both sides;
 //! - one example test per layer the loaders run (`docs/mod-tests.md`): unit
 //!   tests beside the shared code, a Fabric Loader one in `fabric/`, NeoForge
 //!   integration tests in `neoforge/`, and the gametests of each loader in its
@@ -416,6 +420,41 @@ mod tests {
                 "{file}"
             );
         }
+    }
+
+    #[test]
+    fn every_mod_with_a_client_registers_its_config_screen() {
+        for side in [Side::Client, Side::BothRequired, Side::BothOptional] {
+            let files = files(&module(&[Loader::Fabric, Loader::Neoforge], side));
+            let text = |suffix: &str| {
+                let file = files.iter().find(|f| f.path.ends_with(suffix)).unwrap();
+                std::str::from_utf8(&file.contents).unwrap()
+            };
+            assert!(
+                text("/CommonEntrypoint.java")
+                    .contains("public static final ConfigSchema SCHEMA = CONFIG.build();"),
+                "{side}"
+            );
+            assert!(
+                text("/client/ClientEntrypoint.java")
+                    .contains("ConfigScreens.register(CommonEntrypoint.SCHEMA, SETTINGS);"),
+                "{side}"
+            );
+            assert!(
+                text("/NeoForgeClientEntrypoint.java")
+                    .contains("NeoForgeConfigScreen.register(container);"),
+                "{side}"
+            );
+        }
+        // A server-only mod declares its schema, and has no screen to register.
+        let files = files(&module(&[Loader::Fabric, Loader::Neoforge], Side::Server));
+        let common = files
+            .iter()
+            .find(|f| f.path.ends_with("/CommonEntrypoint.java"))
+            .unwrap();
+        let common = std::str::from_utf8(&common.contents).unwrap();
+        assert!(common.contains("ModSide.SERVER"), "{common}");
+        assert!(common.contains("new ModNetwork(SCHEMA)"), "{common}");
     }
 
     #[test]

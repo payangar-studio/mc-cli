@@ -1,8 +1,11 @@
 # The side matrix of projects made by `mod init` (`mod test`), in a workflow of
 # its own so that GitHub filters its pull requests by path: it is the longest
 # job, so it runs on a pull request only when the change touches what it tests,
-# and on every push to main. A file the side matrix comes to depend on goes in
-# `paths`.
+# and on every push to main. `paths` takes every file, then leaves out what
+# neither `mod init` nor `mod test` runs, so a new file runs the matrix by
+# default: take a file off that list once the side matrix depends on it.
+# GitHub matches only the first 300 changed files of a pull request, so a larger
+# one whose relevant files come later skips the matrix; main still runs it.
 name: Side matrix
 
 on:
@@ -10,19 +13,31 @@ on:
     branches: [main]
   pull_request:
     paths:
+      - "**"
+      - "!*.md"
+      - "!docs/**"
+      - "!scripts/**"
+      - "!.claude/**"
+      - "!.github/**"
       - .github/workflows/mod-sides.yml
-      - crates/mod/src/sides/**
-      - crates/mod/src/cli/test.rs
-      - crates/mod/src/versions.rs
-      - crates/mod/tests/side_matrix.rs
-      - crates/mod/src/socle/skeleton.rs
-      - crates/mod/templates/skeleton/**
-      - crates/mod/templates/library/**
-      # The generated mod's Gradle build, without its skills and workflows.
-      - crates/mod/templates/socle/**
+      - "!crates/modpack/**"
+      - "!crates/mc-core/src/auth.rs"
+      - "!crates/mc-core/src/page.rs"
+      - "!crates/mc-core/src/platform/**"
+      - "!crates/mc-core/src/resolve.rs"
+      - "!crates/mc-core/src/secrets/**"
+      - "!crates/mod/src/cli/port.rs"
+      - "!crates/mod/src/cli/run.rs"
+      - "!crates/mod/src/cli/setup.rs"
+      - "!crates/mod/src/cli/update.rs"
+      - "!crates/mod/src/github.rs"
+      - "!crates/mod/src/github/**"
+      - "!crates/mod/src/model/test_profile.rs"
+      - "!crates/mod/src/run/**"
       - "!crates/mod/templates/socle/.claude/**"
       - "!crates/mod/templates/socle/.github/**"
-      - crates/mc-core/src/server/**
+      - "!crates/mod/tests/**"
+      - crates/mod/tests/side_matrix.rs
 
 # A newer push to a pull request cancels its run still in progress.
 concurrency:

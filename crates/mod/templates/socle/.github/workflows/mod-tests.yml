@@ -20,7 +20,9 @@
 # clients and takes about 20 minutes, so it runs locally, before a release.
 #
 # Once per push: on pull requests, and on pushes to a version branch. A newer
-# push to a pull request cancels its run still in progress.
+# push to a pull request cancels its run still in progress. A pull request
+# opened from a version branch runs twice: carry a change from one version to
+# another on a branch of its own.
 name: Tests
 
 on:

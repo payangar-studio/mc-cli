@@ -3,7 +3,8 @@
 //!
 //! - no `pull_request_target` nor `workflow_run` trigger;
 //! - one run per push: with `pull_request`, `push` runs only on the version
-//!   branches (`26.3`, `1.21.10`), which take no pull request;
+//!   branches (`26.3`, `1.21.10`). This holds while no pull request is opened
+//!   from a version branch: each push to it would run both triggers;
 //! - no `mod test`: the side matrix runs locally;
 //! - every action pinned by commit SHA with its version (the repository's
 //!   `scripts/check-workflow-pins.sh`);
@@ -90,13 +91,7 @@ fn lint(path: &Path) -> Vec<String> {
             ));
         }
         for step in job["steps"].as_vec().into_iter().flatten() {
-            let runs_mod_test = step["run"].as_str().is_some_and(|script| {
-                script.lines().any(|line| {
-                    let words: Vec<_> = line.split_whitespace().collect();
-                    words.windows(2).any(|w| w == ["mod", "test"])
-                })
-            });
-            if runs_mod_test {
+            if step["run"].as_str().is_some_and(runs_mod_test) {
                 errors.push(format!(
                     "side matrix: job `{name}` runs `mod test`, which starts servers and clients for about 20 minutes; it runs locally"
                 ));
@@ -127,6 +122,22 @@ fn lint(path: &Path) -> Vec<String> {
         errors.extend(out.lines().map(|l| format!("pin: {l}")));
     }
     errors
+}
+
+/// Whether a `run` script runs `mod test`, called by name or by path, in any
+/// command of a line; comments aside.
+fn runs_mod_test(script: &str) -> bool {
+    script.lines().any(|line| {
+        let words: Vec<_> = line
+            .split(|c: char| c.is_whitespace() || ";&|()`".contains(c))
+            .map(|word| word.trim_matches(['"', '\'']))
+            .filter(|word| !word.is_empty())
+            .take_while(|word| !word.starts_with('#'))
+            .collect();
+        words
+            .windows(2)
+            .any(|w| w[0].rsplit('/').next() == Some("mod") && w[1] == "test")
+    })
 }
 
 /// Keys of a mapping, or the names of a trigger list or a single trigger.
@@ -232,5 +243,29 @@ fn the_closest_legitimate_cases_pass() {
     ] {
         let errors = lint(&fixture(name));
         assert!(errors.is_empty(), "{name}: {errors:?}");
+    }
+}
+
+#[test]
+fn mod_test_is_found_in_any_shell_form() {
+    for script in [
+        "mod test",
+        "mod test --loader fabric",
+        "./gradlew build && mod test",
+        "./gradlew build&&mod test",
+        "mod test; echo done",
+        "echo \"$(mod test)\"",
+        "\"$RUNNER_TEMP/mc-cli/bin/mod\" test --loader fabric",
+        "~/.cargo/bin/mod test",
+    ] {
+        assert!(runs_mod_test(script), "{script}");
+    }
+    for script in [
+        "mod run --profile sodium",
+        "# run mod test locally, before a release",
+        "echo modtest",
+        "test -f mod.toml",
+    ] {
+        assert!(!runs_mod_test(script), "{script}");
     }
 }

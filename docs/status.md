@@ -164,3 +164,4 @@ An instance where a config file was changed in game, a mod was tried from the ap
   "local_entries": [{ "key": "custom-tweaks", "path": "mods-local/custom-tweaks-0.3.jar", "approved": false }]
 }
 ```
+

@@ -6,9 +6,18 @@
 # version branch has its own history apart from the default branch.
 name: Agent instructions
 
+# Once per push: on pull requests, and on pushes to a version branch. A newer
+# push to a pull request cancels its run still in progress. A pull request
+# opened from a version branch runs twice: carry a change from one version to
+# another on a branch of its own.
 on:
   push:
+    branches: ["[0-9]+.[0-9]+", "[0-9]+.[0-9]+.[0-9]+"]
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
 
 permissions: {}
 

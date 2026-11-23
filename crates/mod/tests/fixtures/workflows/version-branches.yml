@@ -1,0 +1,23 @@
+# Fixture of the workflow template lint (tests/workflow_templates.rs).
+# Pushes to the version branches and pull requests: once per push. `mod run`
+# is not `mod test`.
+name: Fixture
+
+on:
+  push:
+    branches: ["[0-9]+.[0-9]+", "[0-9]+.[0-9]+.[0-9]+"]
+  pull_request:
+
+permissions: {}
+
+jobs:
+  job:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download the profile's mods
+        run: mod run --profile sodium --prepare-only --server

@@ -2,6 +2,10 @@
 //! public repository, so each workflow it gets is hardened.
 //!
 //! - no `pull_request_target` nor `workflow_run` trigger;
+//! - one run per push: with `pull_request`, `push` runs only on the version
+//!   branches (`26.3`, `1.21.10`). This holds while no pull request is opened
+//!   from a version branch: each push to it would run both triggers;
+//! - no `mod test`: the side matrix runs locally;
 //! - every action pinned by commit SHA with its version (the repository's
 //!   `scripts/check-workflow-pins.sh`);
 //! - no permission at the workflow level: each job states its own;
@@ -17,6 +21,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use yaml_rust2::{Yaml, YamlLoader};
+
+/// The `push` branch filter of a version branch, named after its Minecraft
+/// version.
+const VERSION_BRANCHES: [&str; 2] = ["[0-9]+.[0-9]+", "[0-9]+.[0-9]+.[0-9]+"];
 
 fn manifest_dir() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -37,6 +45,24 @@ fn lint(path: &Path) -> Vec<String> {
                 "trigger: `{forbidden}` runs with the repository's secrets on code it did not review"
             ));
         }
+    }
+
+    let push = &doc["on"]["push"];
+    let push_on_branches = triggers.iter().any(|t| t == "push")
+        && !(push["tags"].as_vec().is_some()
+            && push["branches"].is_badvalue()
+            && push["branches-ignore"].is_badvalue());
+    let only_version_branches = push["branches-ignore"].is_badvalue()
+        && push["branches"].as_vec().is_some_and(|branches| {
+            !branches.is_empty()
+                && branches
+                    .iter()
+                    .all(|b| b.as_str().is_some_and(|b| VERSION_BRANCHES.contains(&b)))
+        });
+    if push_on_branches && triggers.iter().any(|t| t == "pull_request") && !only_version_branches {
+        errors.push(format!(
+            "trigger: `push` on branches other than the version branches runs twice for each push to a pull request; limit it to `branches: {VERSION_BRANCHES:?}`"
+        ));
     }
 
     let top = &doc["permissions"];
@@ -65,6 +91,11 @@ fn lint(path: &Path) -> Vec<String> {
             ));
         }
         for step in job["steps"].as_vec().into_iter().flatten() {
+            if step["run"].as_str().is_some_and(runs_mod_test) {
+                errors.push(format!(
+                    "side matrix: job `{name}` runs `mod test`, which starts servers and clients for about 20 minutes; it runs locally"
+                ));
+            }
             let scripts = [&step["run"], &step["with"]["script"]];
             for expression in scripts
                 .into_iter()
@@ -91,6 +122,22 @@ fn lint(path: &Path) -> Vec<String> {
         errors.extend(out.lines().map(|l| format!("pin: {l}")));
     }
     errors
+}
+
+/// Whether a `run` script runs `mod test`, called by name or by path, in any
+/// command of a line; comments aside.
+fn runs_mod_test(script: &str) -> bool {
+    script.lines().any(|line| {
+        let words: Vec<_> = line
+            .split(|c: char| c.is_whitespace() || ";&|()`".contains(c))
+            .map(|word| word.trim_matches(['"', '\'']))
+            .filter(|word| !word.is_empty())
+            .take_while(|word| !word.starts_with('#'))
+            .collect();
+        words
+            .windows(2)
+            .any(|w| w[0].rsplit('/').next() == Some("mod") && w[1] == "test")
+    })
 }
 
 /// Keys of a mapping, or the names of a trigger list or a single trigger.
@@ -171,6 +218,15 @@ fn each_defect_fails_on_its_rule() {
             "event-in-script.yml",
             "injection: job `job` writes `${{ github.event.pull_request.title }}`",
         ),
+        (
+            "push-and-pull-request.yml",
+            "trigger: `push` on branches other than the version branches",
+        ),
+        (
+            "push-on-version-prefix.yml",
+            "trigger: `push` on branches other than the version branches",
+        ),
+        ("mod-test.yml", "side matrix: job `job` runs `mod test`"),
     ] {
         let errors = lint(&fixture(name));
         assert_eq!(errors.len(), 1, "{name}: {errors:?}");
@@ -180,8 +236,36 @@ fn each_defect_fails_on_its_rule() {
 
 #[test]
 fn the_closest_legitimate_cases_pass() {
-    for name in ["event-through-env.yml", "tag-job.yml"] {
+    for name in [
+        "event-through-env.yml",
+        "tag-job.yml",
+        "version-branches.yml",
+    ] {
         let errors = lint(&fixture(name));
         assert!(errors.is_empty(), "{name}: {errors:?}");
+    }
+}
+
+#[test]
+fn mod_test_is_found_in_any_shell_form() {
+    for script in [
+        "mod test",
+        "mod test --loader fabric",
+        "./gradlew build && mod test",
+        "./gradlew build&&mod test",
+        "mod test; echo done",
+        "echo \"$(mod test)\"",
+        "\"$RUNNER_TEMP/mc-cli/bin/mod\" test --loader fabric",
+        "~/.cargo/bin/mod test",
+    ] {
+        assert!(runs_mod_test(script), "{script}");
+    }
+    for script in [
+        "mod run --profile sodium",
+        "# run mod test locally, before a release",
+        "echo modtest",
+        "test -f mod.toml",
+    ] {
+        assert!(!runs_mod_test(script), "{script}");
     }
 }

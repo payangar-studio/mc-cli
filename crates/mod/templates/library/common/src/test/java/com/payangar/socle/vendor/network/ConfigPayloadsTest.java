@@ -16,7 +16,6 @@ class ConfigPayloadsTest {
     @Test
     void payloadsAreNamedWithTheModId() {
         assertEquals("demo:vendor/config_sync", payloads.syncType().id().toString());
-        assertEquals("demo:vendor/config_change", payloads.changeType().id().toString());
         assertEquals("demo:vendor/presence", payloads.presenceType().id().toString());
     }
 
@@ -24,9 +23,6 @@ class ConfigPayloadsTest {
     void payloadsComeBackAsTheyWereSent() {
         ConfigPayloads.Sync sync = payloads.sync("{\"range\":16,\"title\":\"Épée\"}");
         assertEquals(sync, roundTrip(payloads.syncCodec(), sync));
-
-        ConfigPayloads.Change change = payloads.change("{\"range\":32}");
-        assertEquals(change, roundTrip(payloads.changeCodec(), change));
 
         ConfigPayloads.Presence presence = new ConfigPayloads.Presence(payloads.presenceType());
         assertEquals(presence, roundTrip(payloads.presenceCodec(), presence));

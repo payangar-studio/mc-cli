@@ -401,6 +401,8 @@ fn library_config_screens_pass_on_a_client() {
 /// Menu (compile-only in the mod) on its classpath; from NeoForge's mod list,
 /// in a check the test adds to the client self-test, NeoForge having no client
 /// gametests. Both go through the loader's own lookup, never the library's.
+/// On Fabric, the screen shows the server settings the skeleton wires:
+/// read-only without a world, editable in single player.
 #[test]
 #[ignore = "downloads Gradle, the loaders, Minecraft and Mod Menu, starts the game"]
 fn the_config_screen_opens_from_each_mod_list() {
@@ -425,6 +427,17 @@ fn the_config_screen_opens_from_each_mod_list() {
         &root.join("fabric/src/gametest/resources/fabric.mod.json"),
         "\"fabric-client-gametest\": [",
         "\"fabric-client-gametest\": [\"com.payangar.swiftblades.gametest.ModMenuConfigScreenGameTest\", ",
+    );
+    // A server setting, for the screen to show the server settings the
+    // skeleton wires.
+    edit(
+        &root.join(format!(
+            "common/src/main/java/{PACKAGE_DIR}/CommonEntrypoint.java"
+        )),
+        "ModSide.BOTH_REQUIRED);",
+        "ModSide.BOTH_REQUIRED);\n    public static final com.payangar.swiftblades.vendor.config.Setting<Integer> RANGE = \
+         CONFIG.define(com.payangar.swiftblades.vendor.config.Setting.integer(\"range\", \
+         com.payangar.swiftblades.vendor.config.Scope.SERVER, 8, 1, 64));",
     );
     // Intransitive: the jar nests what it needs, while its Maven metadata would
     // move the pinned Fabric API modules on the gametest classpath.

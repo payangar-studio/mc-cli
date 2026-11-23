@@ -390,22 +390,28 @@ fn assert_library_tests_passed(root: &Path, subproject: &str, classes: &[&str]) 
     }
 }
 
-/// A line the library's client gametest logs on the dedicated server once an
-/// operator's change is applied, which only that gametest makes.
-const LIBRARY_GAMETEST_MARK: &str =
-    "changed server settings of vendor_network_test: {\"range\":16}";
+/// Lines the library's client gametests log once a change of server settings
+/// is applied, each made by one of them only: on the dedicated server
+/// (`ConfigSyncClientGameTest`), and in single player from the config screen
+/// (`ServerSettingsClientGameTest`).
+const LIBRARY_GAMETEST_MARKS: &[&str] = &[
+    "Server settings of vendor_network_test changed: {\"range\":16}",
+    "Server settings of vendor_network_test changed: {\"range\":64}",
+];
 
-/// The library's client gametest ran in `:fabric:runClientGameTest`, up to
-/// the operator's change: the socle's own client gametest passes that run as
-/// well, so a green build does not show the library's ran.
+/// The library's client gametests ran in `:fabric:runClientGameTest`, up to
+/// their change of server settings: the socle's own client gametest passes
+/// that run as well, so a green build does not show the library's ran.
 fn assert_library_gametest_ran(root: &Path) {
     let log = root.join("fabric/build/run/clientGameTest/logs/latest.log");
     let text = fs::read_to_string(&log).unwrap_or_else(|e| panic!("{}: {e}", log.display()));
-    assert!(
-        text.contains(LIBRARY_GAMETEST_MARK),
-        "the library's client gametest did not run: `{LIBRARY_GAMETEST_MARK}` missing from {}",
-        log.display()
-    );
+    for mark in LIBRARY_GAMETEST_MARKS {
+        assert!(
+            text.contains(mark),
+            "a library client gametest did not run: `{mark}` missing from {}",
+            log.display()
+        );
+    }
 }
 
 /// The library tests that need no loader, in `common/` of the templates.

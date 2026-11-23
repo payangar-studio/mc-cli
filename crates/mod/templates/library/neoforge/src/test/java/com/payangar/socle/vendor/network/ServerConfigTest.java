@@ -1,7 +1,6 @@
 package com.payangar.socle.vendor.network;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -9,18 +8,16 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.payangar.socle.vendor.config.ConfigFile;
 import com.payangar.socle.vendor.config.ConfigSchema;
+import com.payangar.socle.vendor.config.ConfigValues;
 import com.payangar.socle.vendor.config.ModSide;
 import com.payangar.socle.vendor.config.Scope;
 import com.payangar.socle.vendor.config.Setting;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.permissions.LevelBasedPermissionSet;
-import net.minecraft.server.permissions.PermissionSet;
-import net.minecraft.server.players.NameAndId;
 import net.minecraft.world.level.storage.LevelResource;
 import net.neoforged.testframework.junit.EphemeralTestServerProvider;
 import org.junit.jupiter.api.AfterEach;
@@ -28,8 +25,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * The server side of the sync, on a server of the game: the permission check against its list of
- * operators, the world's file, and the settings sent back, read by a client.
+ * The server side of the sync, on a server of the game: the world's file, a change made in single
+ * player, and the settings sent to players, read by a client.
  */
 @ExtendWith(EphemeralTestServerProvider.class)
 class ServerConfigTest {
@@ -41,6 +38,11 @@ class ServerConfigTest {
     private final Setting<String> motd = config.define(Setting.string("motd", Scope.SERVER, ""));
     private final ModNetwork network = new ModNetwork(config.build());
     private final ServerConfig serverConfig = network.serverConfig();
+    private final List<ConfigPayloads.Sync> sent = new ArrayList<>();
+
+    ServerConfigTest() {
+        serverConfig.connect((server, sync) -> sent.add(sync));
+    }
 
     @AfterEach
     void stop() {
@@ -58,19 +60,18 @@ class ServerConfigTest {
     }
 
     /**
-     * The permissions of a player named {@code name}, an operator of {@code level} or not ({@code
-     * null}), as the server computes those of a connected player from its list of operators.
+     * An edit of the running settings, as a config screen makes one: the values it began from, and
+     * a copy of them with {@code setting} set to {@code value}.
      */
-    private static PermissionSet player(MinecraftServer server, String name, LevelBasedPermissionSet level) {
-        NameAndId player = new NameAndId(UUID.randomUUID(), name);
-        if (level != null) {
-            server.getPlayerList().op(player, Optional.of(level), Optional.empty());
-        }
-        return server.getProfilePermissions(player);
+    private <T> ConfigValues[] edit(Setting<T> setting, T value) {
+        ConfigValues base = serverConfig.values().orElseThrow();
+        ConfigValues edited = base.copy();
+        edited.set(setting, value);
+        return new ConfigValues[] {base, edited};
     }
 
-    private Optional<ConfigPayloads.Sync> change(PermissionSet player, String changes) {
-        return serverConfig.change("player", player, network.payloads().change(changes));
+    private void update(MinecraftServer server, ConfigValues[] edit) {
+        serverConfig.update(server, edit[0], edit[1]);
     }
 
     private static JsonObject read(Path file) throws IOException {
@@ -91,68 +92,73 @@ class ServerConfigTest {
     @Test
     void thereAreNoServerSettingsWithoutARunningServer() {
         assertThrows(IllegalStateException.class, () -> serverConfig.get(range));
+        assertTrue(serverConfig.values().isEmpty());
     }
 
     @Test
-    void anOperatorChangeIsAppliedSavedAndSentToPlayers(MinecraftServer server) throws IOException {
+    void theValuesGivenOutAreACopy(MinecraftServer server) throws IOException {
         start(server);
-        PermissionSet operator = player(server, "operator", LevelBasedPermissionSet.GAMEMASTER);
-        assertTrue(ServerConfig.canEdit(operator));
 
-        Optional<ConfigPayloads.Sync> sync = change(operator, "{\"range\": 16}");
+        serverConfig.values().orElseThrow().set(range, 16);
 
-        assertTrue(sync.isPresent());
+        assertEquals(8, serverConfig.get(range));
+    }
+
+    @Test
+    void anUpdateIsAppliedSavedAndSentToPlayers(MinecraftServer server) throws IOException {
+        start(server);
+
+        update(server, edit(range, 16));
+
         assertEquals(16, serverConfig.get(range));
         assertEquals(16, read(file(server)).get("range").getAsInt());
+        assertEquals(1, sent.size());
         ReceivedConfig client = network.receivedConfig();
-        client.receive(sync.get());
+        client.receive(sent.get(0));
         assertEquals(16, client.get(range));
     }
 
     @Test
-    void aChangeFromAPlayerWhoIsNotOperatorIsRefused(MinecraftServer server) throws IOException {
-        start(server);
-        PermissionSet player = player(server, "player", null);
-        assertFalse(ServerConfig.canEdit(player));
+    void anUpdateKeepsTheKeysOfTheFileNoSettingDeclares(MinecraftServer server) throws IOException {
+        Files.createDirectories(file(server).getParent());
+        Files.writeString(file(server), "{\"range\": 8, \"newer\": 1}");
+        serverConfig.start(server);
 
-        Optional<ConfigPayloads.Sync> sync = change(player, "{\"range\": 16}");
+        update(server, edit(pvp, true));
 
-        assertTrue(sync.isEmpty());
-        assertEquals(8, serverConfig.get(range));
-        assertEquals(8, read(file(server)).get("range").getAsInt());
+        assertEquals(1, read(file(server)).get("newer").getAsInt());
+        assertEquals(true, read(file(server)).get("pvp").getAsBoolean());
     }
 
     @Test
-    void anOperatorBelowTheLevelOfGameRulesIsRefused(MinecraftServer server) throws IOException {
+    void anUpdateAfterTheServerStoppedIsDropped(MinecraftServer server) throws IOException {
         start(server);
-        PermissionSet moderator = player(server, "moderator", LevelBasedPermissionSet.MODERATOR);
-        assertFalse(ServerConfig.canEdit(moderator));
-        assertTrue(ServerConfig.canEdit(player(server, "owner", LevelBasedPermissionSet.OWNER)));
+        ConfigValues[] edit = edit(range, 16);
+        serverConfig.stop();
 
-        assertTrue(change(moderator, "{\"range\": 16}").isEmpty());
-        assertEquals(8, serverConfig.get(range));
+        update(server, edit);
+
+        assertTrue(serverConfig.values().isEmpty());
+        assertEquals(List.of(), sent);
     }
 
     @Test
-    void aChangeWithAnInvalidValueIsRefusedWhole(MinecraftServer server) throws IOException {
+    void anUpdateKeepsWhatAnotherChangeMovedSinceTheEditBegan(MinecraftServer server) throws IOException {
         start(server);
-        PermissionSet operator = player(server, "operator", LevelBasedPermissionSet.GAMEMASTER);
+        ConfigValues[] edit = edit(pvp, true);
+        update(server, edit(range, 16));
 
-        for (String change : new String[] {
-            "{\"pvp\": true, \"range\": \"far\"}", "{\"pvp\": true, \"range\": 100}", "{\"pvp\": true, \"other\": 1}",
-            "[true]", "{\"pvp\": tru"
-        }) {
-            assertTrue(change(operator, change).isEmpty(), change);
-        }
+        update(server, edit);
 
-        assertEquals(false, serverConfig.get(pvp));
-        assertEquals(8, serverConfig.get(range));
+        assertEquals(16, serverConfig.get(range));
+        assertEquals(true, serverConfig.get(pvp));
+        assertEquals(16, read(file(server)).get("range").getAsInt());
     }
 
     @Test
     void theSettingsSentToPlayersAreTheRunningOnes(MinecraftServer server) throws IOException {
         start(server);
-        change(player(server, "operator", LevelBasedPermissionSet.GAMEMASTER), "{\"pvp\": true}");
+        update(server, edit(pvp, true));
 
         assertEquals(
                 JsonParser.parseString("{\"range\": 8, \"pvp\": true, \"motd\": \"\"}"),
@@ -174,14 +180,17 @@ class ServerConfigTest {
     }
 
     @Test
-    void aChangeMakingTheSettingsTooLongForTheirPayloadIsRefused(MinecraftServer server) throws IOException {
+    void anUpdateMakingTheSettingsTooLongForTheirPayloadIsRefused(MinecraftServer server) throws IOException {
         // The settings fill their payload exactly: {"range":8,"pvp":false,"motd":"xx…"}.
         startWithMotd(server, ConfigPayloads.MAX_SYNC - "{\"range\":8,\"pvp\":false,\"motd\":\"\"}".length());
-        PermissionSet operator = player(server, "operator", LevelBasedPermissionSet.GAMEMASTER);
         assertTrue(serverConfig.sync().isPresent());
+        String saved = Files.readString(file(server));
 
-        assertTrue(change(operator, "{\"range\": 16}").isEmpty());
+        update(server, edit(range, 16));
+
         assertEquals(8, serverConfig.get(range));
+        assertEquals(saved, Files.readString(file(server)));
+        assertEquals(List.of(), sent);
         assertTrue(serverConfig.sync().isPresent());
     }
 }

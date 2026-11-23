@@ -1,9 +1,6 @@
 package com.payangar.socle.vendor.network;
 
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParseException;
-import com.google.gson.JsonParser;
 import com.payangar.socle.vendor.config.ConfigFile;
 import com.payangar.socle.vendor.config.ConfigSchema;
 import com.payangar.socle.vendor.config.ConfigValues;
@@ -12,23 +9,19 @@ import com.payangar.socle.vendor.config.Setting;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiConsumer;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.server.permissions.PermissionSet;
-import net.minecraft.server.permissions.Permissions;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.storage.LevelResource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * The server settings of the running server, which owns them: loaded from the folder of its world
- * when it starts, changed by operators only, sent to its players. In singleplayer the integrated
- * server plays that role. Used on the server thread.
+ * when it starts, sent to its players. A dedicated server's are changed in its world's file; in
+ * single player, the integrated server plays that role and the config screen of the player who
+ * owns the world changes them ({@link #update}). No client changes them over the network. Used on
+ * the server thread, except {@link #values}, which the client thread reads in single player.
  */
 public final class ServerConfig {
     private final ConfigSchema schema;
@@ -36,8 +29,7 @@ public final class ServerConfig {
     private final Logger logger;
     private volatile ConfigValues values;
     private volatile Path file;
-    /** The players whose change was refused for lack of permission, logged once each per server run. */
-    private final Set<String> refused = ConcurrentHashMap.newKeySet();
+    private volatile BiConsumer<MinecraftServer, ConfigPayloads.Sync> toPlayers = (server, sync) -> {};
 
     ServerConfig(ConfigSchema schema, ConfigPayloads payloads) {
         this.schema = schema;
@@ -46,16 +38,11 @@ public final class ServerConfig {
     }
 
     /**
-     * Whether {@code player} may change server settings: the permission vanilla asks to change a
-     * game rule, which an operator has. The client checks it on its own player to show the values
-     * read-only; the server checks it again on every change.
+     * Called by the loader's server code: how to send settings to every player whose client has the
+     * mod.
      */
-    public static boolean canEdit(Player player) {
-        return canEdit(player.permissions());
-    }
-
-    static boolean canEdit(PermissionSet permissions) {
-        return permissions.hasPermission(Permissions.COMMANDS_GAMEMASTER);
+    public void connect(BiConsumer<MinecraftServer, ConfigPayloads.Sync> toPlayers) {
+        this.toPlayers = toPlayers;
     }
 
     /**
@@ -77,7 +64,11 @@ public final class ServerConfig {
     public void stop() {
         values = null;
         file = null;
-        refused.clear();
+    }
+
+    /** A copy of the settings of the running server; empty when none is running. */
+    public Optional<ConfigValues> values() {
+        return Optional.ofNullable(values).map(ConfigValues::copy);
     }
 
     /**
@@ -105,64 +96,49 @@ public final class ServerConfig {
     }
 
     /**
-     * Applies the change {@code player} asks for, when they may change server settings, every value
-     * of the change is valid, and the settings stay short enough to be sent: a change is applied
-     * whole or not at all. The settings are then saved to the world's file.
-     *
-     * @return the settings to send to every player, empty when the change is refused
+     * Applies to the settings of {@code server}, the running one, what an edit changed: each
+     * setting whose value in {@code edited} differs from {@code base}, the values it began from. A
+     * setting another change moved since keeps its new value. The settings are then saved to the
+     * world's file and sent to every player. Nothing happens when that server stopped, nor when the
+     * settings would be too long to be sent to players (logged).
      */
-    public Optional<ConfigPayloads.Sync> change(ServerPlayer player, ConfigPayloads.Change change) {
-        return change(player.getGameProfile().name(), player.permissions(), change);
-    }
-
-    /** {@link #change(ServerPlayer, ConfigPayloads.Change)} from the player named {@code name}. */
-    Optional<ConfigPayloads.Sync> change(String name, PermissionSet permissions, ConfigPayloads.Change change) {
-        if (!canEdit(permissions)) {
-            // Once per player: a modified client could send a change every tick.
-            if (refused.add(name)) {
-                logger.warn("{} tried to change server settings of {} without the permission of an operator", name,
-                        schema.modId());
+    public void update(MinecraftServer server, ConfigValues base, ConfigValues edited) {
+        for (ConfigValues given : new ConfigValues[] {base, edited}) {
+            if (given.schema() != schema || given.scope() != Scope.SERVER) {
+                throw new IllegalArgumentException("not the server settings of " + schema.modId());
             }
-            return Optional.empty();
         }
-        ConfigValues changed = running().copy();
-        JsonObject asked = new JsonObject();
-        List<String> problems;
+        ConfigValues before = values;
+        if (before == null) {
+            logger.warn("The server settings of {} were not changed: the server stopped", schema.modId());
+            return;
+        }
+        JsonObject was = base.settingsJson();
+        JsonObject moved = new JsonObject();
+        edited.settingsJson().entrySet().stream()
+                .filter(entry -> !entry.getValue().equals(was.get(entry.getKey())))
+                .forEach(entry -> moved.add(entry.getKey(), entry.getValue()));
+        if (moved.isEmpty()) {
+            return;
+        }
+        ConfigValues after = before.copy();
+        after.read(moved);
+        int length = after.settingsJson().toString().length();
+        if (length > ConfigPayloads.MAX_SYNC) {
+            logger.warn("The server settings of {} were not changed ({}): they would be {} characters long, more"
+                    + " than the {} sent to players may hold", schema.modId(), String.join(", ", moved.keySet()), length,
+                    ConfigPayloads.MAX_SYNC);
+            return;
+        }
+        values = after;
+        logger.info("Server settings of {} changed: {}", schema.modId(), moved);
         try {
-            JsonElement json = JsonParser.parseString(change.changes());
-            if (json.isJsonObject()) {
-                asked = json.getAsJsonObject();
-                problems = changed.read(asked);
-            } else {
-                problems = List.of("not a JSON object");
-            }
-        } catch (JsonParseException e) {
-            problems = List.of("not a JSON object (" + e.getMessage() + ")");
-        }
-        JsonObject settings = changed.settingsJson();
-        int length = settings.toString().length();
-        if (problems.isEmpty() && length > ConfigPayloads.MAX_SYNC) {
-            problems = List.of("the settings would be " + length + " characters long, more than the "
-                    + ConfigPayloads.MAX_SYNC + " sent to players may hold");
-        }
-        if (!problems.isEmpty()) {
-            logger.warn("Refused the change of server settings of {} from {}: {}", schema.modId(), name,
-                    String.join("; ", problems));
-            return Optional.empty();
-        }
-        values = changed;
-        try {
-            ConfigFile.save(changed, file);
+            ConfigFile.save(after, file);
         } catch (IOException e) {
-            logger.error("The server settings of {} changed by {} apply until the server stops, but were not"
-                    + " saved: {}", schema.modId(), name, e.getMessage());
+            logger.error("The server settings of {} apply until the server stops, but were not saved: {}",
+                    schema.modId(), e.getMessage());
         }
-        JsonObject applied = new JsonObject();
-        for (String key : asked.keySet()) {
-            applied.add(key, settings.get(key));
-        }
-        logger.info("{} changed server settings of {}: {}", name, schema.modId(), applied);
-        return sync();
+        sync().ifPresent(sync -> toPlayers.accept(server, sync));
     }
 
     private ConfigValues running() {

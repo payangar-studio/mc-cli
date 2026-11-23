@@ -15,8 +15,10 @@
 //! - a server-only mod has no client code;
 //! - every mod declares its config schema in `CommonEntrypoint` (`SCHEMA`),
 //!   and its client entrypoint registers the generated config screen, which
-//!   Mod Menu (Fabric) and the mod list (NeoForge) open; on NeoForge, the
-//!   loader's client entrypoint also hands its mod container to the library;
+//!   Mod Menu (Fabric) and the mod list (NeoForge) open, with the server
+//!   settings of its network when it has one (editable in single player,
+//!   read-only on a server); on NeoForge, the loader's client entrypoint also
+//!   hands its mod container to the library;
 //! - every mod but a client-only one declares the shared library's network
 //!   (`ModNetwork`) in `CommonEntrypoint`, and its loaders' entrypoints
 //!   register it: the side matrix (`mod test`) expects the side check of a
@@ -122,7 +124,11 @@ pub fn files(module: &ModToml) -> Vec<File> {
     if client {
         add(
             format!("{shared}/src/{client_set}/java/{package}/client/ClientEntrypoint.java"),
-            include_str!("../../templates/skeleton/ClientEntrypoint.java"),
+            pick(
+                include_str!("../../templates/skeleton/ClientEntrypoint.java"),
+                include_str!("../../templates/skeleton/ClientEntrypointNetwork.java"),
+                client_network,
+            ),
         );
     }
     if has(Loader::Fabric) {
@@ -443,6 +449,15 @@ mod tests {
             assert!(
                 text("/NeoForgeClientEntrypoint.java")
                     .contains("NeoForgeConfigScreen.register(container);"),
+                "{side}"
+            );
+            // The screen shows the server settings of the mod's network; a
+            // client-only mod has neither.
+            assert_eq!(
+                text("/client/ClientEntrypoint.java").contains(
+                    "ConfigScreens.serverSettings(() -> ServerSettings.of(CommonEntrypoint.NETWORK));"
+                ),
+                side != Side::Client,
                 "{side}"
             );
         }

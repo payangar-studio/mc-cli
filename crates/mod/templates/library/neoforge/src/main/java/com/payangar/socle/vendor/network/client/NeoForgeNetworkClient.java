@@ -3,11 +3,8 @@ package com.payangar.socle.vendor.network.client;
 import com.payangar.socle.vendor.network.ConfigPayloads;
 import com.payangar.socle.vendor.network.ModNetwork;
 import com.payangar.socle.vendor.network.ReceivedConfig;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
-import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 import net.neoforged.neoforge.client.network.event.RegisterClientPayloadHandlersEvent;
 import net.neoforged.neoforge.common.NeoForge;
 
@@ -27,11 +24,5 @@ public final class NeoForgeNetworkClient {
             event.register(payloads.syncType(), (sync, context) -> received.receive(sync));
         });
         NeoForge.EVENT_BUS.addListener(ClientPlayerNetworkEvent.LoggingOut.class, event -> received.reset());
-        received.connect(
-                () -> {
-                    ClientPacketListener connection = Minecraft.getInstance().getConnection();
-                    return connection != null && connection.hasChannel(payloads.changeType());
-                },
-                payload -> ClientPacketDistributor.sendToServer(payload));
     }
 }

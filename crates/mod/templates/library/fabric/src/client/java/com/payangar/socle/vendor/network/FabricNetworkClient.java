@@ -19,6 +19,5 @@ public final class FabricNetworkClient {
         ClientConfigurationNetworking.registerGlobalReceiver(payloads.presenceType(), (presence, context) -> {});
         ClientPlayNetworking.registerGlobalReceiver(payloads.syncType(), (sync, context) -> received.receive(sync));
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> received.reset());
-        received.connect(() -> ClientPlayNetworking.canSend(payloads.changeType()), ClientPlayNetworking::send);
     }
 }

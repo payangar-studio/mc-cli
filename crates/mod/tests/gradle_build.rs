@@ -423,7 +423,8 @@ fn write_mixin_config(path: &Path, package: &str, mixins: &[&str], client: &[&st
 /// loader's own by that loader alone, Fabric's client one on the client.
 /// Each loader's unit test, with the game loaded, reads what the MixinExtras
 /// injectors did. NeoForge has no client-only configuration: one in `common`
-/// fails its build with what to do instead.
+/// fails its build with what to do instead, as does a configuration in the
+/// wrong source set, which would ship undeclared.
 #[test]
 #[ignore = "downloads Gradle, the loaders and Minecraft"]
 fn mixin_configurations_are_declared_and_applied() {
@@ -567,7 +568,27 @@ fn mixin_configurations_are_declared_and_applied() {
     assert!(!output.status.success());
     let log = String::from_utf8_lossy(&output.stderr);
     assert!(
-        log.contains("NeoForge has no client-only mixin configuration"),
+        log.contains(&format!(
+            "common/src/client/resources/{id}.client.mixins.json: NeoForge has no client-only mixin configuration"
+        )),
+        "{log}"
+    );
+    fs::remove_file(resources("common", "client").join(format!("{id}.client.mixins.json")))
+        .unwrap();
+
+    // A configuration in the wrong source set would ship undeclared.
+    fs::rename(
+        resources("fabric", "main").join(format!("{id}.fabric.mixins.json")),
+        resources("fabric", "client").join(format!("{id}.fabric.mixins.json")),
+    )
+    .unwrap();
+    let output = gradle(&root, &[":fabric:generateModMetadata"]);
+    assert!(!output.status.success());
+    let log = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        log.contains(&format!(
+            "fabric/src/client/resources/{id}.fabric.mixins.json: the build declares {id}.fabric.mixins.json from src/main/resources only"
+        )),
         "{log}"
     );
 }

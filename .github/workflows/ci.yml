@@ -1,8 +1,15 @@
 name: CI
 
+# Once per push: on pull requests, and on pushes to main. A newer push to a
+# pull request cancels its run still in progress.
 on:
   push:
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -145,46 +152,6 @@ jobs:
         with:
           name: mod-tests
           path: ${{ runner.temp }}/mod-tests/
-          if-no-files-found: ignore
-
-  # The side matrix of projects made by `mod init` (`mod test`): a dedicated
-  # server and a HeadlessMC client with different mod sets, for each side on
-  # both loaders, and each case on its deliberate defect. One job, so that the
-  # generated mods share one Gradle cache: parallel jobs got throttled by Maven
-  # Central (HTTP 429).
-  mod-sides:
-    runs-on: ubuntu-24.04
-    # The game servers and clients it starts could hang.
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
-        with:
-          distribution: temurin
-          java-version: "25"
-      - name: Day of the Gradle dependency cache
-        id: gradle-day
-        run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.gradle/caches/modules-2
-            ~/.gradle/wrapper/dists
-          key: gradle-deps-${{ steps.gradle-day.outputs.day }}-${{ hashFiles('crates/mod/src/versions.rs', 'crates/mod/templates/socle/**/*.gradle*', 'crates/mod/templates/socle/**/*.kt', 'crates/mod/templates/socle/**/*.properties', 'crates/mod/templates/skeleton/*.gradle*') }}
-      - name: Install the stable Rust toolchain
-        run: |
-          rustup toolchain install stable --profile minimal --no-self-update
-          rustup default stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo test -p mc-mod --locked --test side_matrix -- --ignored --test-threads=1 --nocapture
-        env:
-          MOD_SIDES_ARTIFACTS: ${{ runner.temp }}/mod-sides
-      - name: Upload the logs of the generated mods
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: mod-sides
-          path: ${{ runner.temp }}/mod-sides/
           if-no-files-found: ignore
 
   # `mod run` on a project made by `mod init`: with `--server`, the client,

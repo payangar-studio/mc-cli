@@ -28,7 +28,7 @@ jobs:
         timeout-minutes: 10
         run: |
           apt='sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::Retries=3'
-          for attempt in 1 2 3; do
+          for _ in 1 2 3; do
             $apt update && $apt install -y musl-tools && exit 0
             sleep 15
           done

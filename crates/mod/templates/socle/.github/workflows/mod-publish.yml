@@ -35,7 +35,7 @@ jobs:
       contents: read
       # The vault grants the secrets against the OIDC token of the tag.
       id-token: write
-    uses: payangar-studio/mc-cli/.github/workflows/publish-mod.yml@v0.4.0
+    uses: payangar-studio/mc-cli/.github/workflows/publish-mod.yml@v0.5.0
     with:
       dry-run: ${{ inputs.dry-run == true }}
       vault-url: ${{ vars.INFISICAL_URL }}

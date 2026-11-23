@@ -152,6 +152,7 @@ public class ConfigScreenClientGameTest implements FabricClientGameTest {
         }
         check(failures, "an unreadable client file", () -> unreadableFile(schema, volume, dir.resolve("unreadable.json")));
         check(failures, "a typed field after a reset", () -> resetTypedField(context, modId, dir.resolve("typed.json")));
+        check(failures, "a text longer than its field holds", () -> longText(context, modId, dir.resolve("long.json")));
         check(failures, "a dropdown driven by the keyboard", () -> dropdownKeys(context));
         check(failures, "a drag in the colour square", () -> colourDrag(context));
         if (!failures.isEmpty()) {
@@ -209,6 +210,25 @@ public class ConfigScreenClientGameTest implements FabricClientGameTest {
         click(context, row.reset(), 0.5, 0.5);
         context.waitTick();
         assertEquals("5", context.computeOnClient(mc -> ((TextField) row.control()).text()), "the field after a reset");
+    }
+
+    /**
+     * A text longer than a field holds, written in the file by hand, is shown whole: deleting a
+     * character keeps the rest of it.
+     */
+    private static void longText(ClientGameTestContext context, String modId, Path file) throws IOException {
+        ConfigSchema.Builder builder = ConfigSchema.builder(modId, ModSide.BOTH_REQUIRED);
+        Setting<String> motd = builder.define(Setting.string("motd", Scope.CLIENT, ""));
+        ConfigSchema schema = builder.build();
+        Files.writeString(file, "{\"motd\": \"" + "x".repeat(2000) + "\"}");
+        ClientSettings client = ClientSettings.at(schema, file);
+        context.setScreen(() -> new GeneratedConfigScreen(Component.literal("Long"), null, schema, Map.of(Scope.CLIENT, client)));
+        context.waitTick();
+        click(context, row(context, motd).control(), 0.5, 0.5);
+        context.getInput().pressKey(InputConstants.KEY_END);
+        context.getInput().pressKey(InputConstants.KEY_BACKSPACE);
+        context.waitTick();
+        assertEquals(1999, context.computeOnClient(mc -> client.values().get(motd).length()), "the text's length after a deletion");
     }
 
     /** Arrow keys move the highlight of an open list under a mouse that does not move. */

@@ -19,6 +19,9 @@ import net.minecraft.network.chat.Component;
  *
  * <p>With a {@link #validate validator}, text that it refuses is shown with a red border and not
  * written to the value; once the field loses the focus, it shows the value again.
+ *
+ * <p>A value longer than the {@link #maxLength maximum length} (written in a file by hand) is shown
+ * whole: it can be shortened, not lengthened.
  */
 public class TextField extends Widget {
     private static final int INVALID = 0xFFD9534F;
@@ -26,16 +29,16 @@ public class TextField extends Widget {
     private final EditBox box;
     private final Binding<String> value;
     private Predicate<String> valid = text -> true;
+    private int maxLength = 1024;
 
     public TextField(int width, Component message, Binding<String> value) {
         super(width, Theme.WIDGET_HEIGHT, message);
         this.value = value;
         box = new EditBox(font(), 0, 0, Math.max(1, width - 8), font().lineHeight, message);
         box.setBordered(false);
-        box.setMaxLength(1024);
         box.setTextColor(Theme.TEXT);
         box.setTextColorUneditable(Theme.TEXT_DISABLED);
-        box.setValue(Objects.toString(value.get(), ""));
+        show(Objects.toString(value.get(), ""));
         box.setResponder(this::changed);
         place();
     }
@@ -53,8 +56,20 @@ public class TextField extends Widget {
     }
 
     public TextField maxLength(int length) {
-        box.setMaxLength(length);
+        maxLength = length;
+        box.setMaxLength(Math.max(length, box.getValue().length()));
         return this;
+    }
+
+    /**
+     * Puts {@code text} in the box, whole: the box cuts what passes its maximum length, and the cut
+     * text would be written to the value at the first edit.
+     */
+    private void show(String text) {
+        // Lowered once the text is in: lowered before, it would cut the text the box holds.
+        box.setMaxLength(Integer.MAX_VALUE);
+        box.setValue(text);
+        box.setMaxLength(Math.max(maxLength, text.length()));
     }
 
     /** The text in the field, valid or not. */
@@ -97,7 +112,7 @@ public class TextField extends Widget {
         String current = Objects.toString(value.get(), "");
         if (!box.isFocused() && !box.getValue().equals(current)) {
             // Changed elsewhere (a reset), or text refused while it was edited.
-            box.setValue(current);
+            show(current);
         }
         box.setEditable(active);
         boolean invalid = !valid.test(box.getValue());

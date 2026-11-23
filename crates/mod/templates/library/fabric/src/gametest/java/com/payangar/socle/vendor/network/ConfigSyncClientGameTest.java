@@ -28,9 +28,10 @@ public final class ConfigSyncClientGameTest implements FabricClientGameTest {
             // The server's own value, as if written in its world's file, so that the screen cannot
             // pass by showing the defaults.
             server.runOnServer(s -> {
-                ConfigValues values = serverConfig.values().orElseThrow();
-                values.set(NetworkTestMod.RANGE, 16);
-                serverConfig.update(s, values);
+                ConfigValues base = serverConfig.values().orElseThrow();
+                ConfigValues edited = base.copy();
+                edited.set(NetworkTestMod.RANGE, 16);
+                serverConfig.update(s, base, edited);
             });
             try (TestDedicatedServerConnection connection = server.connect()) {
                 context.waitFor(client -> received.synced());

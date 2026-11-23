@@ -21,7 +21,7 @@ import org.slf4j.LoggerFactory;
  * when it starts, sent to its players. A dedicated server's are changed in its world's file; in
  * single player, the integrated server plays that role and the config screen of the player who
  * owns the world changes them ({@link #update}). No client changes them over the network. Used on
- * the server thread.
+ * the server thread, except {@link #values}, which the client thread reads in single player.
  */
 public final class ServerConfig {
     private final ConfigSchema schema;
@@ -96,25 +96,41 @@ public final class ServerConfig {
     }
 
     /**
-     * Replaces the settings of {@code server}, the running one, with {@code changed}, saves them to
-     * the world's file and sends them to every player. Nothing happens when that server stopped.
+     * Applies to the settings of {@code server}, the running one, what an edit changed: each
+     * setting whose value in {@code edited} differs from {@code base}, the values it began from. A
+     * setting another change moved since keeps its new value. The settings are then saved to the
+     * world's file and sent to every player. Nothing happens when that server stopped, nor when the
+     * settings would be too long to be sent to players (logged).
      */
-    public void update(MinecraftServer server, ConfigValues changed) {
-        if (changed.schema() != schema || changed.scope() != Scope.SERVER) {
-            throw new IllegalArgumentException("not the server settings of " + schema.modId());
+    public void update(MinecraftServer server, ConfigValues base, ConfigValues edited) {
+        for (ConfigValues given : new ConfigValues[] {base, edited}) {
+            if (given.schema() != schema || given.scope() != Scope.SERVER) {
+                throw new IllegalArgumentException("not the server settings of " + schema.modId());
+            }
         }
         ConfigValues before = values;
         if (before == null) {
             logger.warn("The server settings of {} were not changed: the server stopped", schema.modId());
             return;
         }
-        ConfigValues after = changed.copy();
-        values = after;
-        JsonObject was = before.settingsJson();
+        JsonObject was = base.settingsJson();
         JsonObject moved = new JsonObject();
-        after.settingsJson().entrySet().stream()
+        edited.settingsJson().entrySet().stream()
                 .filter(entry -> !entry.getValue().equals(was.get(entry.getKey())))
                 .forEach(entry -> moved.add(entry.getKey(), entry.getValue()));
+        if (moved.isEmpty()) {
+            return;
+        }
+        ConfigValues after = before.copy();
+        after.read(moved);
+        int length = after.settingsJson().toString().length();
+        if (length > ConfigPayloads.MAX_SYNC) {
+            logger.warn("The server settings of {} were not changed ({}): they would be {} characters long, more"
+                    + " than the {} sent to players may hold", schema.modId(), String.join(", ", moved.keySet()), length,
+                    ConfigPayloads.MAX_SYNC);
+            return;
+        }
+        values = after;
         logger.info("Server settings of {} changed: {}", schema.modId(), moved);
         try {
             ConfigFile.save(after, file);

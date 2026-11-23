@@ -8,7 +8,11 @@ import java.util.Objects;
  * player may change them, and how a change is kept.
  */
 public interface SettingsSource {
-    /** The values in use. A screen changes them in place, so the game sees a change at once. */
+    /**
+     * The values a screen shows and changes in place. Those of the client settings are the ones in
+     * use, so the game sees a change at once; a source may instead hand out a copy, which reaches
+     * the game when {@link #save} keeps it (the server settings in single player).
+     */
     ConfigValues values();
 
     /** Whether the player may change them; a screen shows them read-only otherwise. */

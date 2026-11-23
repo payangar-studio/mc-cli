@@ -59,11 +59,19 @@ class ServerConfigTest {
         serverConfig.start(server);
     }
 
-    /** The running settings with {@code setting} set to {@code value}, as a config screen edits them. */
-    private <T> ConfigValues edited(Setting<T> setting, T value) {
-        ConfigValues values = serverConfig.values().orElseThrow();
-        values.set(setting, value);
-        return values;
+    /**
+     * An edit of the running settings, as a config screen makes one: the values it began from, and
+     * a copy of them with {@code setting} set to {@code value}.
+     */
+    private <T> ConfigValues[] edit(Setting<T> setting, T value) {
+        ConfigValues base = serverConfig.values().orElseThrow();
+        ConfigValues edited = base.copy();
+        edited.set(setting, value);
+        return new ConfigValues[] {base, edited};
+    }
+
+    private void update(MinecraftServer server, ConfigValues[] edit) {
+        serverConfig.update(server, edit[0], edit[1]);
     }
 
     private static JsonObject read(Path file) throws IOException {
@@ -100,7 +108,7 @@ class ServerConfigTest {
     void anUpdateIsAppliedSavedAndSentToPlayers(MinecraftServer server) throws IOException {
         start(server);
 
-        serverConfig.update(server, edited(range, 16));
+        update(server, edit(range, 16));
 
         assertEquals(16, serverConfig.get(range));
         assertEquals(16, read(file(server)).get("range").getAsInt());
@@ -116,7 +124,7 @@ class ServerConfigTest {
         Files.writeString(file(server), "{\"range\": 8, \"newer\": 1}");
         serverConfig.start(server);
 
-        serverConfig.update(server, edited(pvp, true));
+        update(server, edit(pvp, true));
 
         assertEquals(1, read(file(server)).get("newer").getAsInt());
         assertEquals(true, read(file(server)).get("pvp").getAsBoolean());
@@ -125,31 +133,64 @@ class ServerConfigTest {
     @Test
     void anUpdateAfterTheServerStoppedIsDropped(MinecraftServer server) throws IOException {
         start(server);
-        ConfigValues values = edited(range, 16);
+        ConfigValues[] edit = edit(range, 16);
         serverConfig.stop();
 
-        serverConfig.update(server, values);
+        update(server, edit);
 
         assertTrue(serverConfig.values().isEmpty());
         assertEquals(List.of(), sent);
     }
 
     @Test
+    void anUpdateKeepsWhatAnotherChangeMovedSinceTheEditBegan(MinecraftServer server) throws IOException {
+        start(server);
+        ConfigValues[] edit = edit(pvp, true);
+        update(server, edit(range, 16));
+
+        update(server, edit);
+
+        assertEquals(16, serverConfig.get(range));
+        assertEquals(true, serverConfig.get(pvp));
+        assertEquals(16, read(file(server)).get("range").getAsInt());
+    }
+
+    @Test
     void theSettingsSentToPlayersAreTheRunningOnes(MinecraftServer server) throws IOException {
         start(server);
-        serverConfig.update(server, edited(pvp, true));
+        update(server, edit(pvp, true));
 
         assertEquals(
                 JsonParser.parseString("{\"range\": 8, \"pvp\": true, \"motd\": \"\"}"),
                 JsonParser.parseString(serverConfig.sync().orElseThrow().values()));
     }
 
+    /** Starts the server settings from a file whose {@code motd} is {@code length} characters long. */
+    private void startWithMotd(MinecraftServer server, int length) throws IOException {
+        Files.createDirectories(file(server).getParent());
+        Files.writeString(file(server), "{\"motd\": \"" + "x".repeat(length) + "\"}");
+        serverConfig.start(server);
+    }
+
     @Test
     void settingsTooLongForTheirPayloadAreNotSent(MinecraftServer server) throws IOException {
-        Files.createDirectories(file(server).getParent());
-        Files.writeString(file(server), "{\"motd\": \"" + "x".repeat(ConfigPayloads.MAX_SYNC) + "\"}");
-        serverConfig.start(server);
+        startWithMotd(server, ConfigPayloads.MAX_SYNC);
 
         assertTrue(serverConfig.sync().isEmpty());
+    }
+
+    @Test
+    void anUpdateMakingTheSettingsTooLongForTheirPayloadIsRefused(MinecraftServer server) throws IOException {
+        // The settings fill their payload exactly: {"range":8,"pvp":false,"motd":"xx…"}.
+        startWithMotd(server, ConfigPayloads.MAX_SYNC - "{\"range\":8,\"pvp\":false,\"motd\":\"\"}".length());
+        assertTrue(serverConfig.sync().isPresent());
+        String saved = Files.readString(file(server));
+
+        update(server, edit(range, 16));
+
+        assertEquals(8, serverConfig.get(range));
+        assertEquals(saved, Files.readString(file(server)));
+        assertEquals(List.of(), sent);
+        assertTrue(serverConfig.sync().isPresent());
     }
 }

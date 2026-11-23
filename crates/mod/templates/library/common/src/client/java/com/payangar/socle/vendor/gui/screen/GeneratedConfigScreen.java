@@ -28,7 +28,9 @@ import org.slf4j.LoggerFactory;
  * editable (server settings anywhere but in single player) are shown read-only. Settings
  * whose file could not be read say that a change will not be saved.
  *
- * <p>A change applies to the values at once; closing the screen saves each scope that changed.
+ * <p>A change applies at once to the values of its scope's source; closing the screen saves each
+ * scope that changed. Whether the game sees a change before the save depends on the source (see
+ * {@link SettingsSource#values}).
  */
 public class GeneratedConfigScreen extends ConfigScreen {
     private final ConfigSchema schema;
@@ -122,7 +124,7 @@ public class GeneratedConfigScreen extends ConfigScreen {
         if (scope != null) {
             SettingsSource source = sources.get(scope);
             if (!source.editable()) {
-                panel.add(Label.dim(panel.innerWidth(), Texts.vendor(modId, "config.read_only")));
+                panel.add(Label.dim(panel.innerWidth(), Texts.vendor(modId, "config.read_only", modId)));
             } else if (source.values().fromBrokenFile()) {
                 panel.add(Label.dim(panel.innerWidth(), Texts.vendor(modId, "config.broken_file")));
             }

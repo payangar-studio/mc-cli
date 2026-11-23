@@ -8,6 +8,7 @@ This repository is a Minecraft mod managed with `mc-cli` (`mod` binary). Each Mi
 - `page/`: the project page on the platforms; `page/page.toml` holds the platform ids.
 - `changelogs/`: the release notes, one file per version, written by hand.
 - `common/`, `fabric/`, `neoforge/`: the mod's code, one subproject per loader plus the shared code; a single-loader mod has only its loader's subproject.
+- Mixin configurations: in the resources of the subproject holding their mixins, named `<id>.mixins.json` (every loader), `<id>.fabric.mixins.json` or `<id>.neoforge.mixins.json` (one loader), `<id>.client.mixins.json` (Fabric client resources). The build declares only these names.
 - The socle, rewritten by `mod update`: `.mod/`, `build-logic/`, the Gradle wrapper and `settings.gradle.kts`, the socle's skills, its workflows (`mod-` prefix) and this block.
 
 ### Use the CLI

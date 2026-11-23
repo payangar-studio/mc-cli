@@ -20,5 +20,7 @@ pub struct Versions {
     pub neoforge: String,
     pub moddevgradle: String,
     pub modmenu: String,
+    pub sponge_mixin: String,
+    pub mixinextras: String,
     pub mod_publish_plugin: String,
 }

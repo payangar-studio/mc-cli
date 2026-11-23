@@ -9,9 +9,16 @@
 object ModMetadata {
     /**
      * Values of build-logic/templates/fabric.mod.json. `modMenu`: whether the
-     * sources hold the library's Mod Menu entrypoint.
+     * sources hold the library's Mod Menu entrypoint. `mixins` (Mixins.kt):
+     * none leaves the `mixins` key out.
      */
-    fun fabric(mod: ModToml, pinned: Pinned, version: String, modMenu: Boolean): Map<String, String> {
+    fun fabric(
+        mod: ModToml,
+        pinned: Pinned,
+        version: String,
+        modMenu: Boolean,
+        mixins: List<MixinConfig>,
+    ): Map<String, String> {
         val entrypoints = buildList {
             add("\"main\": [${json("${mod.pkg}.fabric.FabricEntrypoint")}]")
             if (mod.hasClient) add("\"client\": [${json("${mod.pkg}.fabric.client.FabricClientEntrypoint")}]")
@@ -38,11 +45,17 @@ object ModMetadata {
             "depends" to jsonObject(depends),
             "suggests" to jsonObject(deps.filter { it.type == "optional" }.associate { it.id to "*" }),
             "breaks" to jsonObject(deps.filter { it.type == "incompatible" }.associate { it.id to "*" }),
+            "mixins" to if (mixins.isEmpty()) "" else mixins.joinToString(", ", ",\n  \"mixins\": [ ", " ]") {
+                if (it.client) "{ \"config\": ${json(it.name)}, \"environment\": \"client\" }" else json(it.name)
+            },
         )
     }
 
-    /** Values of build-logic/templates/neoforge.mods.toml. */
-    fun neoforge(mod: ModToml, pinned: Pinned, version: String): Map<String, String> {
+    /**
+     * Values of build-logic/templates/neoforge.mods.toml. `mixins` (Mixins.kt),
+     * none of them for the client only: one `[[mixins]]` entry each.
+     */
+    fun neoforge(mod: ModToml, pinned: Pinned, version: String, mixins: List<MixinConfig>): Map<String, String> {
         val side = when (mod.side) {
             "client" -> "CLIENT"
             "server" -> "SERVER"
@@ -66,6 +79,7 @@ object ModMetadata {
             "version" to escapeToml(version),
             "license" to escapeToml(mod.license),
             "dependencies" to dependencies.joinToString("\n"),
+            "mixins" to mixins.joinToString("") { "\n[[mixins]]\nconfig = ${toml(it.name)}\n" },
         )
     }
 

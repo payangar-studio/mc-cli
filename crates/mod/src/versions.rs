@@ -5,7 +5,8 @@
 //! Each set is read from the official maven metadata when it is added, never
 //! guessed: maven.fabricmc.net (Loom, Fabric Loader, Fabric API),
 //! maven.neoforged.net (NeoForge, ModDevGradle), maven.terraformersmc.com
-//! (Mod Menu) and the Gradle plugin portal (mod-publish-plugin).
+//! (Mod Menu) and the Gradle plugin portal (mod-publish-plugin); Mixin and
+//! MixinExtras from the build files of the pinned loaders.
 
 use crate::model::socle::Versions;
 
@@ -23,6 +24,10 @@ pub struct Pinned {
     /// Mod Menu: compiled against for the shared library's config screen
     /// entrypoint, and loaded by the dev client of `mod run`.
     pub modmenu: &'static str,
+    /// Mixin and MixinExtras, compiled against in `common`: the lower of the
+    /// versions both loaders bundle.
+    pub sponge_mixin: &'static str,
+    pub mixinextras: &'static str,
     /// mod-publish-plugin, as the `me.modmuss50.mod-publish-plugin` plugin.
     pub mod_publish_plugin: &'static str,
 }
@@ -36,6 +41,8 @@ pub const SUPPORTED: &[Pinned] = &[Pinned {
     neoforge: "26.3.0.113",
     moddevgradle: "2.0.148",
     modmenu: "21.0.1",
+    sponge_mixin: "0.17.4+mixin.0.8.7",
+    mixinextras: "0.5.5",
     mod_publish_plugin: "2.2.1",
 }];
 
@@ -55,6 +62,8 @@ impl Pinned {
             neoforge: self.neoforge.into(),
             moddevgradle: self.moddevgradle.into(),
             modmenu: self.modmenu.into(),
+            sponge_mixin: self.sponge_mixin.into(),
+            mixinextras: self.mixinextras.into(),
             mod_publish_plugin: self.mod_publish_plugin.into(),
         }
     }

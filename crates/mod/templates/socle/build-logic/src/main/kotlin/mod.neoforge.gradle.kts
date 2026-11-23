@@ -3,7 +3,8 @@
 // The NeoForge jar, through ModDevGradle. NeoForge has no client source set:
 // the client code of a NeoForge-only mod lives in the `client` packages, and
 // NeoForge hides client classes from a dedicated server in development.
-// META-INF/neoforge.mods.toml is generated from mod.toml.
+// META-INF/neoforge.mods.toml is generated from mod.toml and the mixin
+// configurations (Mixins.kt).
 //
 // The tests:
 // - `test`: JUnit in src/test with the game and the mod loaded (MDG's unit
@@ -87,7 +88,7 @@ if (hasCommon) {
 }
 
 val generateModMetadata = tasks.register<Copy>("generateModMetadata") {
-    val values = ModMetadata.neoforge(mod, pinned, project.version.toString())
+    val values = ModMetadata.neoforge(mod, pinned, project.version.toString(), mixinConfigs(mod, "neoforge"))
     inputs.properties(values)
     from(rootDir.resolve("build-logic/templates/neoforge.mods.toml"))
     expand(values)

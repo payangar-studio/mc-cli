@@ -83,9 +83,16 @@ jobs:
           java-version: "25"
           cache: gradle
       - name: Install the virtual display and the software renderers
+        # A stuck Ubuntu mirror once held a job until its own timeout: apt
+        # gives up on a silent connection, and the step on a slow mirror.
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb mesa-vulkan-drivers
+          apt='sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::Retries=3'
+          for attempt in 1 2 3; do
+            $apt update && $apt install -y xvfb mesa-vulkan-drivers && exit 0
+            sleep 15
+          done
+          exit 1
       - run: ./gradlew --console=plain clientCheck
       - name: Upload the renders
         if: ${{ !cancelled() }}
@@ -159,9 +166,16 @@ jobs:
           java-version: "25"
           cache: gradle
       - name: Install the virtual display and the software renderers
+        # A stuck Ubuntu mirror once held a job until its own timeout: apt
+        # gives up on a silent connection, and the step on a slow mirror.
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb mesa-vulkan-drivers
+          apt='sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::Retries=3'
+          for attempt in 1 2 3; do
+            $apt update && $apt install -y xvfb mesa-vulkan-drivers && exit 0
+            sleep 15
+          done
+          exit 1
       # The release of mc-cli that wrote the socle (`.mod/socle.toml`).
       - name: Install mod
         env:

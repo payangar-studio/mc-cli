@@ -24,7 +24,15 @@ jobs:
           rustup toolchain install stable --profile minimal --target "$TARGET" --no-self-update
           rustup default stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Install musl
+        timeout-minutes: 10
+        run: |
+          apt='sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::Retries=3'
+          for _ in 1 2 3; do
+            $apt update && $apt install -y musl-tools && exit 0
+            sleep 15
+          done
+          exit 1
       - run: cargo build --release --locked --target "$TARGET"
       - name: Archive each binary with its checksum
         run: |

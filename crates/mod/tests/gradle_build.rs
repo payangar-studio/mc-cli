@@ -549,7 +549,7 @@ import {package}.vendor.network.ModNetwork;
 public final class CommonEntrypoint {{
     public static final String MOD_ID = "{id}";
 
-    private static final ConfigSchema SCHEMA = schema();
+    public static final ConfigSchema SCHEMA = schema();
 
     public static final ModNetwork NETWORK = new ModNetwork(SCHEMA);
 

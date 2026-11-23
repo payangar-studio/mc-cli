@@ -1,6 +1,7 @@
 package com.payangar.swiftblades.neoforge.client;
 
 import com.payangar.swiftblades.CommonEntrypoint;
+import com.payangar.swiftblades.vendor.gui.screen.GeneratedConfigScreen;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.LoadingOverlay;
 import net.minecraft.client.gui.screens.Screen;
@@ -15,7 +16,8 @@ import org.slf4j.LoggerFactory;
 /**
  * The mod's config screen, as NeoForge's mod list opens it: the config screen extension of the
  * mod's container, once the client has loaded. NeoForge runs no client gametest, so the client
- * self-test carries this check and logs what it found.
+ * self-test carries this check and logs what it found: the screen's class, and whether it shows
+ * the mod's own schema.
  */
 @Mod(value = CommonEntrypoint.MOD_ID, dist = Dist.CLIENT)
 public final class ModListConfigScreenCheck {
@@ -35,8 +37,11 @@ public final class ModListConfigScreenCheck {
             if (screen != null) {
                 minecraft.gui.setScreen(screen);
             }
+            boolean schema = screen instanceof GeneratedConfigScreen generated
+                    && generated.schema() == CommonEntrypoint.SCHEMA;
             LoggerFactory.getLogger(ModListConfigScreenCheck.class)
-                    .info("Config screen from the mod list: {}", screen == null ? "none" : screen.getClass().getName());
+                    .info("Config screen from the mod list: {}, showing CommonEntrypoint.SCHEMA: {}",
+                            screen == null ? "none" : screen.getClass().getName(), schema);
         });
     }
 }

@@ -409,12 +409,14 @@ fn the_config_screen_opens_from_each_mod_list() {
         "\"fabric-client-gametest\": [",
         "\"fabric-client-gametest\": [\"com.payangar.swiftblades.gametest.ModMenuConfigScreenGameTest\", ",
     );
+    // Intransitive: the jar nests what it needs, while its Maven metadata would
+    // move the pinned Fabric API modules on the gametest classpath.
     let modmenu = mc_mod::versions::of("26.3").unwrap().modmenu;
     edit(
         &root.join("fabric/build.gradle.kts"),
         "dependencies {",
         &format!(
-            "dependencies {{\n    \"gametestImplementation\"(\"com.terraformersmc:modmenu:{modmenu}\")"
+            "dependencies {{\n    \"gametestImplementation\"(\"com.terraformersmc:modmenu:{modmenu}\") {{ isTransitive = false }}"
         ),
     );
 
@@ -427,9 +429,9 @@ fn the_config_screen_opens_from_each_mod_list() {
         output.status.success(),
         "./gradlew :fabric:runClientGameTest :neoforge:runClientSelfTest failed"
     );
-    let found = "Config screen from the mod list: com.payangar.swiftblades.vendor.gui.screen.GeneratedConfigScreen";
+    let found = "Config screen from the mod list: com.payangar.swiftblades.vendor.gui.screen.GeneratedConfigScreen, showing CommonEntrypoint.SCHEMA: true";
     assert!(
         log(&output).contains(found),
-        "NeoForge's mod list found no generated config screen"
+        "NeoForge's mod list found no generated config screen of CommonEntrypoint.SCHEMA"
     );
 }

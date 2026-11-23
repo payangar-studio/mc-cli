@@ -66,7 +66,7 @@ jobs:
           path: |
             ~/.gradle/caches/modules-2
             ~/.gradle/wrapper/dists
-          key: gradle-deps-${{ steps.gradle-day.outputs.day }}-${{ hashFiles('crates/mod/src/versions.rs', 'crates/mod/templates/socle/**/*.gradle*', 'crates/mod/templates/socle/**/*.kt', 'crates/mod/templates/socle/**/*.properties', 'crates/mod/templates/skeleton/*.gradle*') }}
+          key: gradle-deps-${{ github.job }}-${{ steps.gradle-day.outputs.day }}-${{ hashFiles('crates/mod/src/versions.rs', 'crates/mod/templates/socle/**/*.gradle*', 'crates/mod/templates/socle/**/*.kt', 'crates/mod/templates/socle/**/*.properties', 'crates/mod/templates/skeleton/*.gradle*') }}
       - name: Install the stable Rust toolchain
         run: |
           rustup toolchain install stable --profile minimal --no-self-update

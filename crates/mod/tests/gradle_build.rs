@@ -169,6 +169,15 @@ fn builds_with_neoforge_only() {
     assert_library_tests_passed(&root, "neoforge", COMMON_LIBRARY_TESTS);
 }
 
+/// A NeoForge client mod has no network: its client entrypoint registers the
+/// config screen alone.
+#[test]
+#[ignore = "downloads Gradle, NeoForge and Minecraft"]
+fn builds_a_neoforge_client_mod() {
+    let (_tmp, root) = init("neoforge", "client");
+    gradle_ok(&root, &[":neoforge:compileJava"]);
+}
+
 /// The NeoForge `runClient` and `runServer` of `mod run` load the mod alone:
 /// ModDevGradle loads every registered mod by default, the gametest mod
 /// `<id>_gametest` included. Read in the `fml.modFolders` argument of each run,
@@ -565,7 +574,7 @@ import {package}.vendor.network.ModNetwork;
 public final class CommonEntrypoint {{
     public static final String MOD_ID = "{id}";
 
-    private static final ConfigSchema SCHEMA = schema();
+    public static final ConfigSchema SCHEMA = schema();
 
     public static final ModNetwork NETWORK = new ModNetwork(SCHEMA);
 

@@ -290,8 +290,8 @@ fn defect_modded_client_crashes() {
             .join("common/src/client/java")
             .join(PACKAGE_DIR)
             .join("client/ClientEntrypoint.java"),
-        "public static void init() {}",
-        "public static void init() {\n        throw new IllegalStateException(\"deliberate defect\");\n    }",
+        "ConfigScreens.register(CommonEntrypoint.SCHEMA, SETTINGS);",
+        "throw new IllegalStateException(\"deliberate defect\");",
     );
     fails(
         &root,

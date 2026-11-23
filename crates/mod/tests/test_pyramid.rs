@@ -395,3 +395,60 @@ fn library_config_screens_pass_on_a_client() {
         );
     }
 }
+
+/// The config screen of a mod made by `mod init` opens from each loader's mod
+/// list: from Mod Menu on Fabric, in a client gametest the test adds with Mod
+/// Menu (compile-only in the mod) on its classpath; from NeoForge's mod list,
+/// in a check the test adds to the client self-test, NeoForge having no client
+/// gametests. Both go through the loader's own lookup, never the library's.
+#[test]
+#[ignore = "downloads Gradle, the loaders, Minecraft and Mod Menu, starts the game"]
+fn the_config_screen_opens_from_each_mod_list() {
+    let (_tmp, root) = init("fabric,neoforge", "both-required");
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config_screen");
+    let add = |fixture: &str, to: String| {
+        let to = root.join(to);
+        fs::create_dir_all(to.parent().unwrap()).unwrap();
+        fs::copy(fixtures.join(fixture), to).unwrap();
+    };
+    add(
+        "ModMenuConfigScreenGameTest.java",
+        format!("fabric/src/gametest/java/{PACKAGE_DIR}/gametest/ModMenuConfigScreenGameTest.java"),
+    );
+    add(
+        "ModListConfigScreenCheck.java",
+        format!(
+            "neoforge/src/main/java/{PACKAGE_DIR}/neoforge/client/ModListConfigScreenCheck.java"
+        ),
+    );
+    edit(
+        &root.join("fabric/src/gametest/resources/fabric.mod.json"),
+        "\"fabric-client-gametest\": [",
+        "\"fabric-client-gametest\": [\"com.payangar.swiftblades.gametest.ModMenuConfigScreenGameTest\", ",
+    );
+    // Intransitive: the jar nests what it needs, while its Maven metadata would
+    // move the pinned Fabric API modules on the gametest classpath.
+    let modmenu = mc_mod::versions::of("26.3").unwrap().modmenu;
+    edit(
+        &root.join("fabric/build.gradle.kts"),
+        "dependencies {",
+        &format!(
+            "dependencies {{\n    \"gametestImplementation\"(\"com.terraformersmc:modmenu:{modmenu}\") {{ isTransitive = false }}"
+        ),
+    );
+
+    let output = gradle(
+        &root,
+        &[":fabric:runClientGameTest", ":neoforge:runClientSelfTest"],
+    );
+    keep_runs(&root, "the_config_screen_opens_from_each_mod_list");
+    assert!(
+        output.status.success(),
+        "./gradlew :fabric:runClientGameTest :neoforge:runClientSelfTest failed"
+    );
+    let found = "Config screen from the mod list: com.payangar.swiftblades.vendor.gui.screen.GeneratedConfigScreen, showing CommonEntrypoint.SCHEMA: true";
+    assert!(
+        log(&output).contains(found),
+        "NeoForge's mod list found no generated config screen of CommonEntrypoint.SCHEMA"
+    );
+}

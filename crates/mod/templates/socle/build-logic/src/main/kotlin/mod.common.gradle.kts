@@ -1,8 +1,9 @@
 // Managed by mc-cli: `mod update` rewrites this file.
 //
 // `common`: the code shared by the loaders, compiled against vanilla Minecraft
-// only. Loom splits it into `main` (both sides) and `client`: code in `main`
-// that uses a client-only Minecraft class does not compile.
+// only, plus the Mixin and MixinExtras annotations. Loom splits it into `main`
+// (both sides) and `client`: code in `main` that uses a client-only Minecraft
+// class does not compile.
 
 import net.fabricmc.loom.api.LoomGradleExtensionAPI
 
@@ -21,6 +22,9 @@ extensions.configure<LoomGradleExtensionAPI> {
 
 dependencies {
     "minecraft"("com.mojang:minecraft:${pinned.minecraft}")
+    // Mixins in common: both loaders bundle Mixin and MixinExtras.
+    "compileOnly"("net.fabricmc:sponge-mixin:${pinned.spongeMixin}")
+    "compileOnly"("io.github.llamalad7:mixinextras-common:${pinned.mixinextras}")
 }
 
 exportCommon(sourceSets["main"])

@@ -8,5 +8,5 @@
   "entrypoints": ${entrypoints},
   "depends": ${depends},
   "suggests": ${suggests},
-  "breaks": ${breaks}
+  "breaks": ${breaks}${mixins}
 }

@@ -6,4 +6,4 @@ modId = "${id}"
 version = "${version}"
 displayName = "${name}"
 
-${dependencies}
+${dependencies}${mixins}

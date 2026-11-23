@@ -271,10 +271,12 @@ type = "incompatible"
             side != "server",
             "{side}: Mod Menu's entrypoint follows the library's client code"
         );
+        assert!(fabric.get("mixins").is_none(), "no mixin configuration");
 
         let neoforge = neoforge_mods_toml(&root);
         assert_eq!(neoforge["mods"][0]["modId"].as_str(), Some("swift_blades"));
         assert_eq!(neoforge["license"].as_str(), Some("MIT"));
+        assert!(neoforge.get("mixins").is_none(), "no mixin configuration");
         let deps = neoforge["dependencies"]["swift_blades"].as_array().unwrap();
         let dep = |id: &str| {
             deps.iter()
@@ -371,6 +373,222 @@ fn a_malformed_dependency_is_named() {
     let log = String::from_utf8_lossy(&output.stderr);
     assert!(
         log.contains("mod.toml, dependencies[0]: must be a table"),
+        "{log}"
+    );
+}
+
+/// Writes, as `<PACKAGE>.<class>` in the Java sources of `dir`, a mixin whose
+/// MixinExtras injector makes `StringUtil.stripColor` turn `probe` into
+/// `applied`.
+fn write_probe_mixin(dir: &Path, class: &str, probe: &str, applied: &str) {
+    let (package, name) = class.rsplit_once('.').unwrap();
+    let path = dir.join(format!(
+        "{}/{}.java",
+        package_dir(),
+        class.replace('.', "/")
+    ));
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let source = format!(
+        "package {PACKAGE}.{package};\n\n\
+         import com.llamalad7.mixinextras.injector.ModifyReturnValue;\n\
+         import net.minecraft.util.StringUtil;\n\
+         import org.spongepowered.asm.mixin.Mixin;\n\
+         import org.spongepowered.asm.mixin.injection.At;\n\n\
+         @Mixin(StringUtil.class)\n\
+         abstract class {name} {{\n    \
+         @ModifyReturnValue(method = \"stripColor\", at = @At(\"RETURN\"))\n    \
+         private static String probe(String original) {{\n        \
+         return \"{probe}\".equals(original) ? \"{applied}\" : original;\n    }}\n}}\n"
+    );
+    fs::write(path, source).unwrap();
+}
+
+/// Writes the mixin configuration `path` of the mixins of `<PACKAGE>.<package>`:
+/// `mixins` on both sides, `client` on the client only.
+fn write_mixin_config(path: &Path, package: &str, mixins: &[&str], client: &[&str]) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let config = serde_json::json!({
+        "required": true,
+        "package": format!("{PACKAGE}.{package}"),
+        "compatibilityLevel": "JAVA_25",
+        "mixins": mixins,
+        "client": client,
+        "injectors": { "defaultRequire": 1 },
+    });
+    fs::write(path, config.to_string()).unwrap();
+}
+
+/// Mixin configurations named as in the loaders' templates are declared in
+/// the loader metadata and their mixins applied: `common`'s by both loaders, a
+/// loader's own by that loader alone, Fabric's client one on the client.
+/// Each loader's unit test, with the game loaded, reads what the MixinExtras
+/// injectors did. NeoForge has no client-only configuration: one in `common`
+/// fails its build with what to do instead, as does a configuration in the
+/// wrong source set, which would ship undeclared.
+#[test]
+#[ignore = "downloads Gradle, the loaders and Minecraft"]
+fn mixin_configurations_are_declared_and_applied() {
+    let (_tmp, root) = init("fabric,neoforge", "both-required");
+    let id = "swift_blades";
+    let resources = |subproject: &str, source_set: &str| {
+        root.join(format!("{subproject}/src/{source_set}/resources"))
+    };
+    let java = |subproject: &str, source_set: &str| {
+        root.join(format!("{subproject}/src/{source_set}/java"))
+    };
+
+    write_mixin_config(
+        &resources("common", "main").join(format!("{id}.mixins.json")),
+        "mixin",
+        &["CommonMixin"],
+        &["client.CommonClientMixin"],
+    );
+    write_probe_mixin(
+        &java("common", "main"),
+        "mixin.CommonMixin",
+        "probe-common",
+        "common",
+    );
+    write_probe_mixin(
+        &java("common", "client"),
+        "mixin.client.CommonClientMixin",
+        "probe-common-client",
+        "common-client",
+    );
+    for loader in ["fabric", "neoforge"] {
+        write_mixin_config(
+            &resources(loader, "main").join(format!("{id}.{loader}.mixins.json")),
+            &format!("{loader}.mixin"),
+            &["LoaderMixin"],
+            &[],
+        );
+        write_probe_mixin(
+            &java(loader, "main"),
+            &format!("{loader}.mixin.LoaderMixin"),
+            &format!("probe-{loader}"),
+            loader,
+        );
+    }
+    write_mixin_config(
+        &resources("fabric", "client").join(format!("{id}.client.mixins.json")),
+        "fabric.client.mixin",
+        &[],
+        &["ClientMixin"],
+    );
+    write_probe_mixin(
+        &java("fabric", "client"),
+        "fabric.client.mixin.ClientMixin",
+        "probe-fabric-client",
+        "fabric-client",
+    );
+
+    // What each loader's tests read: the probe and what it becomes. Fabric's
+    // run as a client, NeoForge's as a dedicated server, where no client
+    // mixin applies.
+    let probes = |loader: &str| -> Vec<(&'static str, &'static str)> {
+        let mut probes = vec![("probe-common", "common")];
+        if loader == "fabric" {
+            probes.extend([
+                ("probe-common-client", "common-client"),
+                ("probe-fabric", "fabric"),
+                ("probe-fabric-client", "fabric-client"),
+                ("probe-neoforge", "probe-neoforge"),
+            ]);
+        } else {
+            probes.extend([
+                ("probe-common-client", "probe-common-client"),
+                ("probe-neoforge", "neoforge"),
+                ("probe-fabric", "probe-fabric"),
+            ]);
+        }
+        probes
+    };
+    for loader in ["fabric", "neoforge"] {
+        let checks: String = probes(loader)
+            .iter()
+            .map(|(probe, expected)| {
+                format!(
+                    "        assertEquals(\"{expected}\", StringUtil.stripColor(\"{probe}\"));\n"
+                )
+            })
+            .collect();
+        let path = java(loader, "test").join(format!("{}/MixinProbeTest.java", package_dir()));
+        fs::write(
+            path,
+            format!(
+                "package {PACKAGE};\n\n\
+                 import static org.junit.jupiter.api.Assertions.assertEquals;\n\n\
+                 import net.minecraft.util.StringUtil;\n\
+                 import org.junit.jupiter.api.Test;\n\n\
+                 class MixinProbeTest {{\n    \
+                 @Test\n    \
+                 void theMixinsAreApplied() {{\n{checks}    }}\n}}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    gradle_ok(&root, &[":fabric:test", ":neoforge:test"]);
+    for loader in ["fabric", "neoforge"] {
+        let report = root.join(format!(
+            "{loader}/build/test-results/test/TEST-{PACKAGE}.MixinProbeTest.xml"
+        ));
+        assert!(report.is_file(), "{loader}: the probe test did not run");
+    }
+    assert_eq!(
+        fabric_mod_json(&root)["mixins"],
+        serde_json::json!([
+            format!("{id}.mixins.json"),
+            format!("{id}.fabric.mixins.json"),
+            { "config": format!("{id}.client.mixins.json"), "environment": "client" },
+        ])
+    );
+    let neoforge = neoforge_mods_toml(&root);
+    let configs: Vec<&str> = neoforge["mixins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["config"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        configs,
+        [
+            format!("{id}.mixins.json"),
+            format!("{id}.neoforge.mixins.json")
+        ]
+    );
+
+    write_mixin_config(
+        &resources("common", "client").join(format!("{id}.client.mixins.json")),
+        "mixin.client",
+        &[],
+        &[],
+    );
+    let output = gradle(&root, &[":neoforge:generateModMetadata"]);
+    assert!(!output.status.success());
+    let log = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        log.contains(&format!(
+            "common/src/client/resources/{id}.client.mixins.json: NeoForge has no client-only mixin configuration"
+        )),
+        "{log}"
+    );
+    fs::remove_file(resources("common", "client").join(format!("{id}.client.mixins.json")))
+        .unwrap();
+
+    // A configuration in the wrong source set would ship undeclared.
+    fs::rename(
+        resources("fabric", "main").join(format!("{id}.fabric.mixins.json")),
+        resources("fabric", "client").join(format!("{id}.fabric.mixins.json")),
+    )
+    .unwrap();
+    let output = gradle(&root, &[":fabric:generateModMetadata"]);
+    assert!(!output.status.success());
+    let log = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        log.contains(&format!(
+            "fabric/src/client/resources/{id}.fabric.mixins.json: the build declares {id}.fabric.mixins.json from src/main/resources only"
+        )),
         "{log}"
     );
 }

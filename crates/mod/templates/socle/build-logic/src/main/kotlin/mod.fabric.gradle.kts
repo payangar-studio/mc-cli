@@ -1,7 +1,8 @@
 // Managed by mc-cli: `mod update` rewrites this file.
 //
 // The Fabric jar, through Loom without remapping. The client code lives in the
-// `client` source set. fabric.mod.json is generated from mod.toml.
+// `client` source set. fabric.mod.json is generated from mod.toml and the
+// mixin configurations (Mixins.kt).
 //
 // The tests: JUnit in src/test on Fabric Loader (fabric-loader-junit), and the
 // gametests of src/gametest, a test mod `<id>_gametest` with its own
@@ -123,7 +124,13 @@ if (hasCommon) {
 }
 
 val generateModMetadata = tasks.register<Copy>("generateModMetadata") {
-    val values = ModMetadata.fabric(mod, pinned, project.version.toString(), modMenuEntrypoint.isFile)
+    val values = ModMetadata.fabric(
+        mod,
+        pinned,
+        project.version.toString(),
+        modMenuEntrypoint.isFile,
+        mixinConfigs(mod, "fabric"),
+    )
     inputs.properties(values)
     from(rootDir.resolve("build-logic/templates/fabric.mod.json"))
     expand(values)

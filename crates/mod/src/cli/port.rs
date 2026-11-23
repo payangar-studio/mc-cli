@@ -170,6 +170,8 @@ fn changes<'a>(from: &'a Versions, to: &'a Versions) -> Vec<(&'static str, &'a s
         ("neoforge", &from.neoforge, &to.neoforge),
         ("moddevgradle", &from.moddevgradle, &to.moddevgradle),
         ("modmenu", &from.modmenu, &to.modmenu),
+        ("sponge-mixin", &from.sponge_mixin, &to.sponge_mixin),
+        ("mixinextras", &from.mixinextras, &to.mixinextras),
         (
             "mod-publish-plugin",
             &from.mod_publish_plugin,
@@ -235,6 +237,8 @@ mod tests {
             neoforge: "26.4.0.7",
             moddevgradle: "2.0.150",
             modmenu: "21.1.0",
+            sponge_mixin: "0.17.6+mixin.0.8.7",
+            mixinextras: "0.5.6",
             mod_publish_plugin: "2.2.1",
         },
         Pinned {
@@ -245,6 +249,8 @@ mod tests {
             neoforge: "26.3.0.113",
             moddevgradle: "2.0.148",
             modmenu: "21.0.1",
+            sponge_mixin: "0.17.4+mixin.0.8.7",
+            mixinextras: "0.5.5",
             mod_publish_plugin: "2.2.1",
         },
     ];
@@ -385,6 +391,8 @@ mod tests {
              \x20 neoforge: 26.3.0.113 -> 26.4.0.7\n\
              \x20 moddevgradle: 2.0.148 -> 2.0.150\n\
              \x20 modmenu: 21.0.1 -> 21.1.0\n\
+             \x20 sponge-mixin: 0.17.4+mixin.0.8.7 -> 0.17.6+mixin.0.8.7\n\
+             \x20 mixinextras: 0.5.5 -> 0.5.6\n\
              Nothing is committed. Build with `./gradlew build`, then follow the `mod-port` skill to fix what breaks.\n"
         );
     }

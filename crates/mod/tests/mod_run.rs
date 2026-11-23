@@ -1,6 +1,7 @@
 //! `mod run` on a project made by `mod init`: with `--server`, the client
 //! joins the dev server, and closing it stops the server; a CI profile runs the Fabric gametests with its mods,
-//! as the mod's workflow does. They download Gradle, Fabric, Minecraft and
+//! as the mod's workflow does; the Fabric client loads Mod Menu when the mod
+//! has a client side. They download Gradle, Fabric, Minecraft and
 //! mods from Modrinth, and run the client on a virtual display (`xvfb-run`),
 //! so they are `#[ignore]`: CI runs them in their own job (`cargo test -p
 //! mc-mod --test mod_run -- --ignored`). They need a JDK 25 and Xvfb.
@@ -38,9 +39,9 @@ fn git(root: &Path, args: &[&str]) -> String {
     String::from_utf8(output.stdout).unwrap()
 }
 
-/// A Fabric mod made by `mod init` in `<tmp>/mod`, with the test profiles
-/// `profiles` (name, content), committed.
-fn init(profiles: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
+/// A Fabric mod made by `mod init` in `<tmp>/mod`, on `side`, with the test
+/// profiles `profiles` (name, content), committed.
+fn init(side: &str, profiles: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
     Command::cargo_bin("mod")
         .unwrap()
@@ -55,7 +56,7 @@ fn init(profiles: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
             "--mc-version=26.3",
             "--name=Swift Blades",
             "--loaders=fabric",
-            "--side=both-required",
+            &format!("--side={side}"),
         ])
         .assert()
         .success();
@@ -92,11 +93,14 @@ fn java_in(dir: &Path) -> Vec<String> {
 #[test]
 #[ignore = "downloads Gradle, Fabric, Minecraft and Lithium; needs Xvfb"]
 fn the_client_joins_the_dev_server() {
-    let (tmp, root) = init(&[(
-        "multi",
-        "mods = [\"lithium@mc26.3-0.26.3-fabric\"]\n\n[options]\nrenderDistance = 4\n\
+    let (tmp, root) = init(
+        "both-required",
+        &[(
+            "multi",
+            "mods = [\"lithium@mc26.3-0.26.3-fabric\"]\n\n[options]\nrenderDistance = 4\n\
          preferredGraphicsBackend = '\"opengl\"'\n",
-    )]);
+        )],
+    );
 
     let output = tmp.path().join("mod-run.log");
     let out = fs::File::create(&output).unwrap();
@@ -312,13 +316,16 @@ fn copy_dir(from: &Path, to: &Path) {
 #[test]
 #[ignore = "downloads Gradle, Fabric, Minecraft and Sodium; needs Xvfb"]
 fn a_ci_profile_runs_the_fabric_gametests_with_its_mods() {
-    let (tmp, root) = init(&[
-        (
-            "sodium",
-            "ci = true\nmods = [\"sodium@mc26.3-0.9.2-fabric\"]\n",
-        ),
-        ("local", "mods = [\"lithium@mc26.3-0.26.3-fabric\"]\n"),
-    ]);
+    let (tmp, root) = init(
+        "both-required",
+        &[
+            (
+                "sodium",
+                "ci = true\nmods = [\"sodium@mc26.3-0.9.2-fabric\"]\n",
+            ),
+            ("local", "mods = [\"lithium@mc26.3-0.26.3-fabric\"]\n"),
+        ],
+    );
     let text = fs::read_to_string(root.join(".github/workflows/mod-tests.yml")).unwrap();
     let workflow = &YamlLoader::load_from_str(&text).unwrap()[0];
     let jobs = &workflow["jobs"];
@@ -403,5 +410,130 @@ fn a_ci_profile_runs_the_fabric_gametests_with_its_mods() {
     assert_eq!(
         git(&root, &["status", "--porcelain", "--untracked-files=all"]),
         ""
+    );
+}
+
+/// The mods the Fabric client of `mod run <args>` loads, for a mod on
+/// `side`: their lines of the loader's list (`- modmenu 21.0.1`), and the
+/// Mod Menu version `.mod/socle.toml` pins. The client is stopped once it has
+/// logged them.
+fn client_mods(side: &str, args: &[&str]) -> (Vec<String>, String) {
+    let (tmp, root) = init(side, &[]);
+    let output = tmp.path().join("mod-run.log");
+    let out = fs::File::create(&output).unwrap();
+    let mut child = Process::new("xvfb-run")
+        .args(["-a", "-s", "-screen 0 1280x720x24"])
+        .arg(cargo_bin("mod"))
+        .arg("run")
+        .args(args)
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .stdout(out.try_clone().unwrap())
+        .stderr(out)
+        // Its own process group, stopped as a whole below.
+        .process_group(0)
+        .spawn()
+        .unwrap();
+
+    let dir = root.join("runs/.one-shot");
+    let log = dir.join("logs/latest.log");
+    let started = Instant::now();
+    let listed = |text: &str| {
+        text.lines()
+            .any(|l| l.contains("Loading ") && l.contains(" mods:"))
+    };
+    let mut listed_at: Option<Instant> = None;
+    let text = loop {
+        let text = fs::read_to_string(&log).unwrap_or_default();
+        if listed_at.is_none() && listed(&text) {
+            listed_at = Some(Instant::now());
+        }
+        // The list is one log event: a few seconds more and it is written.
+        if listed_at.is_some_and(|at| at.elapsed() > Duration::from_secs(5))
+            || child.try_wait().unwrap().is_some()
+            || started.elapsed() > TIMEOUT
+        {
+            break text;
+        }
+        thread::sleep(Duration::from_secs(1));
+    };
+    for pid in java_in(&dir) {
+        let _ = Process::new("kill").args(["-TERM", &pid]).status();
+    }
+    stop(&mut child);
+    keep_logs(
+        &format!(
+            "modmenu-{side}{}",
+            if args.is_empty() { "" } else { "-asked" }
+        ),
+        &[
+            (output.clone(), "mod-run.log"),
+            (dir.join("logs"), "client-logs"),
+            (dir.join("crash-reports"), "client-crash-reports"),
+        ],
+    );
+    assert!(
+        listed(&text),
+        "the client never listed its mods; mod run output:\n{}\nclient log:\n{text}",
+        fs::read_to_string(&output).unwrap_or_default()
+    );
+    let mods: Vec<String> = text
+        .lines()
+        .map(str::trim_start)
+        .filter(|l| l.starts_with("- "))
+        .map(str::to_owned)
+        .collect();
+    eprintln!("loaded on the client:\n{}", mods.join("\n"));
+    let socle: toml::Table = fs::read_to_string(root.join(".mod/socle.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let modmenu = socle["init"]["modmenu"].as_str().unwrap().to_owned();
+    (mods, modmenu)
+}
+
+#[test]
+#[ignore = "downloads Gradle, Fabric, Minecraft and Mod Menu; needs Xvfb"]
+fn the_fabric_client_of_a_mod_with_a_client_side_loads_mod_menu() {
+    let (mods, modmenu) = client_mods("both-required", &[]);
+    assert!(
+        mods.iter().any(|l| *l == format!("- modmenu {modmenu}")),
+        "Mod Menu {modmenu}, pinned in .mod/socle.toml, was not loaded"
+    );
+}
+
+#[test]
+#[ignore = "downloads Gradle, Fabric and Minecraft; needs Xvfb"]
+fn the_fabric_client_of_a_server_only_mod_does_without_mod_menu() {
+    let (mods, _) = client_mods("server", &[]);
+    assert!(
+        mods.iter().any(|l| l.starts_with("- minecraft ")),
+        "the mod list was not read"
+    );
+    assert!(
+        !mods.iter().any(|l| l.starts_with("- modmenu ")),
+        "Mod Menu was loaded for a server-only mod"
+    );
+}
+
+/// A Mod Menu the run asks for (`--with`, a profile's mods) is the one loaded,
+/// even older than the pinned one.
+#[test]
+#[ignore = "downloads Gradle, Fabric, Minecraft and Mod Menu; needs Xvfb"]
+fn a_mod_menu_asked_with_with_replaces_the_pinned_one() {
+    let asked = "21.0.0";
+    let (mods, pinned) = client_mods("both-required", &["--with", &format!("modmenu@{asked}")]);
+    assert_ne!(
+        pinned, asked,
+        "the test needs a version other than the pinned one"
+    );
+    let loaded: Vec<&String> = mods
+        .iter()
+        .filter(|l| l.starts_with("- modmenu "))
+        .collect();
+    assert_eq!(
+        loaded,
+        [&format!("- modmenu {asked}")],
+        "Mod Menu {asked}, asked with --with, was not the one loaded"
     );
 }

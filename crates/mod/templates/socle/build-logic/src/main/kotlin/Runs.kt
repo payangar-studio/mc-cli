@@ -9,7 +9,9 @@
 // that `mod run --prepare-only --server` filled: the Fabric gametests then
 // run with the profile's mods.
 
+import groovy.json.JsonSlurper
 import java.io.File
+import java.util.zip.ZipFile
 import org.gradle.api.Project
 import org.gradle.api.Task
 
@@ -59,3 +61,14 @@ fun testProfileProperties(dir: File, mods: String): Map<String, String> = mapOf(
     "fabric.addMods" to dir.resolve(mods).absolutePath,
     "mod.testProfile" to dir.name,
 )
+
+/** Whether a jar of `dir` is the Fabric mod `id`, by its fabric.mod.json. */
+fun holdsFabricMod(dir: File, id: String): Boolean =
+    dir.listFiles { f -> f.isFile && f.extension == "jar" }.orEmpty().any { jar ->
+        ZipFile(jar).use { zip ->
+            zip.getEntry("fabric.mod.json")?.let { entry ->
+                val json = zip.getInputStream(entry).use { JsonSlurper().parse(it, "UTF-8") }
+                (json as? Map<*, *>)?.get("id") == id
+            } ?: false
+        }
+    }

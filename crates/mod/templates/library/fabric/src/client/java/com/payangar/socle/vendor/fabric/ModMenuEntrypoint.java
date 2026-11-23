@@ -7,8 +7,9 @@ import java.util.Map;
 
 /**
  * Mod Menu's entrypoint (`modmenu` in fabric.mod.json): opens the screen registered with {@link
- * ConfigScreens}. Mod Menu is compile-only; without it, this class is never loaded. The screen is
- * looked up each time Mod Menu asks, so the mod may register it after Mod Menu has started.
+ * ConfigScreens}. Mod Menu is compile-only for the mod's jar, and loaded by the dev client of
+ * {@code mod run}; without it, this class is never loaded. The screen is looked up each time Mod
+ * Menu asks, so the mod may register it after Mod Menu has started.
  */
 public final class ModMenuEntrypoint implements ModMenuApi {
     @Override

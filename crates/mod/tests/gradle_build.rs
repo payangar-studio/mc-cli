@@ -115,6 +115,31 @@ fn builds_with_fabric_only() {
     assert_library_tests_passed(&root, "fabric", COMMON_LIBRARY_TESTS);
 }
 
+/// Configuring the build of a mod with a client side but without the
+/// library's Mod Menu entrypoint resolves no Mod Menu: only the dev client of
+/// `mod run` needs it then, so the other tasks do without its repository.
+#[test]
+#[ignore = "downloads Gradle, Fabric and Minecraft"]
+fn configuring_a_client_mod_without_the_entrypoint_resolves_no_mod_menu() {
+    let (_tmp, root) = init("fabric", "both-required");
+    fs::remove_file(root.join(format!(
+        "fabric/src/client/java/{}/vendor/fabric/ModMenuEntrypoint.java",
+        package_dir()
+    )))
+    .unwrap();
+    let socle = root.join(".mod/socle.toml");
+    let text = fs::read_to_string(&socle).unwrap();
+    let table: toml::Table = text.parse().unwrap();
+    let pinned = table["init"]["modmenu"].as_str().unwrap();
+    let missing = text.replace(
+        &format!("modmenu = \"{pinned}\""),
+        "modmenu = \"0.0.0-missing\"",
+    );
+    assert_ne!(missing, text, "no Mod Menu pin to replace");
+    fs::write(&socle, missing).unwrap();
+    gradle_ok(&root, &["help"]);
+}
+
 /// A server mod loads in the Fabric Loader of its unit tests, which starts as
 /// a client unless told otherwise.
 #[test]

@@ -16,11 +16,21 @@
 # `production-screenshots` one. References come from `screenshots`
 # (`./gradlew :fabric:promoteScreenshots -Pscreenshots=<dir>`), never from a
 # local GPU.
+# The side matrix (`mod test`) is not run here: it starts real servers and
+# clients and takes about 20 minutes, so it runs locally, before a release.
+#
+# Once per push: on pull requests, and on pushes to a version branch. A newer
+# push to a pull request cancels its run still in progress.
 name: Tests
 
 on:
   push:
+    branches: ["[0-9]+.[0-9]+", "[0-9]+.[0-9]+.[0-9]+"]
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
 
 permissions: {}
 

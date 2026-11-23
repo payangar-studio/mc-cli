@@ -53,3 +53,4 @@ References live in `fabric/src/gametest/resources/templates/`. They are renders 
 - Each case writes the server's log, the client's game directory and HeadlessMC's output under `runs/sides/<loader>/<case>/`.
 - What the mod's feature does in game is not part of the matrix: client gametests cover it, on a server that has the same mods.
 - Linux and macOS only: the client is stopped through its process group.
+- CI does not run it: it starts real servers and clients and takes about 20 minutes. Run it locally before a release, and after changing `side`, the mod's network or its loaders.

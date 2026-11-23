@@ -2,6 +2,9 @@
 //! public repository, so each workflow it gets is hardened.
 //!
 //! - no `pull_request_target` nor `workflow_run` trigger;
+//! - one run per push: with `pull_request`, `push` runs only on the version
+//!   branches (`26.3`, `1.21.10`), which take no pull request;
+//! - no `mod test`: the side matrix runs locally;
 //! - every action pinned by commit SHA with its version (the repository's
 //!   `scripts/check-workflow-pins.sh`);
 //! - no permission at the workflow level: each job states its own;
@@ -17,6 +20,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use yaml_rust2::{Yaml, YamlLoader};
+
+/// The `push` branch filter of a version branch, named after its Minecraft
+/// version.
+const VERSION_BRANCHES: [&str; 2] = ["[0-9]+.[0-9]+", "[0-9]+.[0-9]+.[0-9]+"];
 
 fn manifest_dir() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -37,6 +44,24 @@ fn lint(path: &Path) -> Vec<String> {
                 "trigger: `{forbidden}` runs with the repository's secrets on code it did not review"
             ));
         }
+    }
+
+    let push = &doc["on"]["push"];
+    let push_on_branches = triggers.iter().any(|t| t == "push")
+        && !(push["tags"].as_vec().is_some()
+            && push["branches"].is_badvalue()
+            && push["branches-ignore"].is_badvalue());
+    let only_version_branches = push["branches-ignore"].is_badvalue()
+        && push["branches"].as_vec().is_some_and(|branches| {
+            !branches.is_empty()
+                && branches
+                    .iter()
+                    .all(|b| b.as_str().is_some_and(|b| VERSION_BRANCHES.contains(&b)))
+        });
+    if push_on_branches && triggers.iter().any(|t| t == "pull_request") && !only_version_branches {
+        errors.push(format!(
+            "trigger: `push` on branches other than the version branches runs twice for each push to a pull request; limit it to `branches: {VERSION_BRANCHES:?}`"
+        ));
     }
 
     let top = &doc["permissions"];
@@ -65,6 +90,17 @@ fn lint(path: &Path) -> Vec<String> {
             ));
         }
         for step in job["steps"].as_vec().into_iter().flatten() {
+            let runs_mod_test = step["run"].as_str().is_some_and(|script| {
+                script.lines().any(|line| {
+                    let words: Vec<_> = line.split_whitespace().collect();
+                    words.windows(2).any(|w| w == ["mod", "test"])
+                })
+            });
+            if runs_mod_test {
+                errors.push(format!(
+                    "side matrix: job `{name}` runs `mod test`, which starts servers and clients for about 20 minutes; it runs locally"
+                ));
+            }
             let scripts = [&step["run"], &step["with"]["script"]];
             for expression in scripts
                 .into_iter()
@@ -171,6 +207,15 @@ fn each_defect_fails_on_its_rule() {
             "event-in-script.yml",
             "injection: job `job` writes `${{ github.event.pull_request.title }}`",
         ),
+        (
+            "push-and-pull-request.yml",
+            "trigger: `push` on branches other than the version branches",
+        ),
+        (
+            "push-on-version-prefix.yml",
+            "trigger: `push` on branches other than the version branches",
+        ),
+        ("mod-test.yml", "side matrix: job `job` runs `mod test`"),
     ] {
         let errors = lint(&fixture(name));
         assert_eq!(errors.len(), 1, "{name}: {errors:?}");
@@ -180,7 +225,11 @@ fn each_defect_fails_on_its_rule() {
 
 #[test]
 fn the_closest_legitimate_cases_pass() {
-    for name in ["event-through-env.yml", "tag-job.yml"] {
+    for name in [
+        "event-through-env.yml",
+        "tag-job.yml",
+        "version-branches.yml",
+    ] {
         let errors = lint(&fixture(name));
         assert!(errors.is_empty(), "{name}: {errors:?}");
     }

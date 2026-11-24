@@ -204,6 +204,40 @@ fn both_optional_mod_passes() {
     passes("both-optional");
 }
 
+/// A mod required on both sides that registers content still names itself to
+/// a vanilla client: on Fabric, Fabric API's registry sync refuses that
+/// client too, with its own message, unless the side check runs first.
+#[test]
+#[ignore = "downloads Gradle, the loaders, Minecraft and HeadlessMC, starts servers and clients"]
+fn both_required_mod_with_content_refuses_with_its_name() {
+    let (_tmp, root) = init("both-required");
+    edit(
+        &root
+            .join("fabric/src/main/java")
+            .join(PACKAGE_DIR)
+            .join("fabric/FabricEntrypoint.java"),
+        "CommonEntrypoint.init();",
+        "CommonEntrypoint.init();\n        \
+         net.minecraft.resources.ResourceKey<net.minecraft.world.item.Item> key = \
+         net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.ITEM, \
+         net.minecraft.resources.Identifier.fromNamespaceAndPath(CommonEntrypoint.MOD_ID, \"blade\"));\n        \
+         net.minecraft.core.Registry.register(net.minecraft.core.registries.BuiltInRegistries.ITEM, key, \
+         new net.minecraft.world.item.Item(new net.minecraft.world.item.Item.Properties().setId(key)));",
+    );
+    let (ok, report) = mod_test(
+        &root,
+        "both-required-with-content",
+        &["--case", "vanilla-client-refused"],
+    );
+    assert!(ok, "mod test failed:\n{report}");
+    for loader in ["fabric", "neoforge"] {
+        assert!(
+            report.contains(&format!("PASS {loader} vanilla-client-refused")),
+            "{report}"
+        );
+    }
+}
+
 /// server-starts: shared code that reaches a client class crashes the
 /// dedicated server.
 #[test]

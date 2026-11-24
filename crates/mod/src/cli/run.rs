@@ -11,7 +11,7 @@ use crate::context::Context;
 use crate::error::{Error, Result};
 use crate::model::mod_toml::{Loader, ModToml};
 use crate::model::socle::SocleConfig;
-use crate::model::test_profile::{TestProfile, Wanted};
+use crate::model::test_profile::{Item, TestProfile, Wanted};
 use crate::run::{self, ONE_SHOT, Plan, RUNS};
 use crate::socle::SOCLE;
 
@@ -43,6 +43,7 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
     let socle = SocleConfig::load(&SOCLE, root)?;
     let runs = root.join(RUNS);
 
+    let one_shot = args.profile.is_none();
     let (dir, profile) = match &args.profile {
         Some(name) => (runs.join(name), TestProfile::load(root, name)?),
         None => {
@@ -59,16 +60,24 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
         }
     };
     let loader = loader(&args, &profile, &module)?;
-    let wanted = |list: &[String]| {
+    // Local files are a profile's: `--with` and `--pack` take Modrinth projects.
+    let items = |list: &[String]| {
         list.iter()
-            .map(|w| Wanted::parse(w))
+            .map(|w| {
+                if one_shot {
+                    Wanted::parse(w).map(Item::Modrinth)
+                } else {
+                    Item::parse(w)
+                }
+            })
             .collect::<Result<Vec<_>>>()
     };
     let plan = Plan {
         dir,
         loader,
-        mods: wanted(&profile.mods)?,
-        packs: wanted(&profile.packs)?,
+        mods: items(&profile.mods)?,
+        packs: items(&profile.packs)?,
+        local: TestProfile::local_dir(root),
         options: profile.options_lines()?,
         server: args.server,
     };

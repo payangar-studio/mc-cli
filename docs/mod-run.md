@@ -1,6 +1,6 @@
 # `mod run`
 
-Runs the mod in the game through the repository's Gradle wrapper (the loader's dev client), alone or with extra mods and resource packs from Modrinth. Everything it writes goes under `runs/`, which the socle's `.gitignore` block ignores.
+Runs the mod in the game through the repository's Gradle wrapper (the loader's dev client), alone or with extra mods and resource packs from Modrinth or from the repository. Everything it writes goes under `runs/`, which the socle's `.gitignore` block ignores.
 
 ```sh
 mod run                                     # the mod alone
@@ -23,13 +23,15 @@ mod run --profile sodium --prepare-only     # fill runs/sodium/ without starting
 ```toml
 loader = "fabric"        # the loader it runs on; Fabric for a CI profile, else the mod's first loader, when absent
 ci = true                # also run in the mod's CI (see below)
-mods = ["sodium@mc26.3-0.9.2-fabric", "lithium@mc26.3-0.26.3-fabric"]   # pinned
-packs = ["fresh-animations"]   # enabled in this order, the last one on top; @<version> optional
+mods = ["sodium@mc26.3-0.9.2-fabric", "local/touch-n-motion-1.2.jar"]   # Modrinth ones pinned
+packs = ["fresh-animations", "local/our-pack.zip"]   # enabled in this order, the last one on top; @<version> optional
 
 [options]                # written to options.txt as <key>:<value>
 renderDistance = 8
 lang = "fr_fr"
 ```
+
+A mod or a resource pack no platform serves (a build received from its author, a mod only distributed as a jar) goes in `test-profiles/local/`, tracked by git. The profile names it `local/<file>`, in `mods` or `packs` among the Modrinth entries, so resource packs keep a single order. `mod run` copies it into the run directory, a local mod to the client and the server alike, replaces the copy when the file changes, and removes it once the profile no longer lists it. The commit pins it, so it takes no version. Its file name has to differ from every other file of the run. `--with` and `--pack` take Modrinth projects only.
 
 The resource packs are enabled in `options.txt` (`resourcePacks`), after the packs the game itself lists. A value of `[options]` is written as it is: a string option the game stores quoted is written quoted (`soundDevice = '""'`). Options select the `custom` graphics preset unless the profile sets `graphicsPreset` itself: the game applies any other preset over the graphics options, such as `renderDistance`. When `mod run` creates `options.txt`, the build adds the game's data version to it before the client starts; without it, the game would run its old options fixes on the file and reset some options. `mod run` also turns off the accessibility onboarding screen of a first launch (`onboardAccessibility:false`) unless the profile or the player set it: the game shows it before joining a server.
 
@@ -46,4 +48,4 @@ mod run --profile <name> --prepare-only --server
 ./gradlew :fabric:runGameTest :fabric:runClientGameTest -Pmod.testProfile=runs/<name>
 ```
 
-`-Pmod.testProfile` adds the jars of `runs/<name>/mods/` to the client gametests and those of `runs/<name>/server/mods/` to the server gametests, through Fabric Loader's `-Dfabric.addMods`, and sets the system property `mod.testProfile` to the profile's name. Screenshot comparisons read it and are skipped: the profile's mods change the render, and the references hold the mod alone. A comparison written in the mod's own client gametests follows the example's pattern (`if (System.getProperty("mod.testProfile") == null)`). Only the profile's mods are added in CI; its resource packs and options apply to `mod run`.
+`-Pmod.testProfile` adds the jars of `runs/<name>/mods/` to the client gametests and those of `runs/<name>/server/mods/` to the server gametests, through Fabric Loader's `-Dfabric.addMods`, and sets the system property `mod.testProfile` to the profile's name. Screenshot comparisons read it and are skipped: the profile's mods change the render, and the references hold the mod alone. A comparison written in the mod's own client gametests follows the example's pattern (`if (System.getProperty("mod.testProfile") == null)`). Only the profile's mods are added in CI, local ones included since the job runs on the repository's checkout; its resource packs and options apply to `mod run`.

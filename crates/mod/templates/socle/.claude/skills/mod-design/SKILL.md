@@ -15,6 +15,8 @@ The page shows what the documents say, nothing more. When they disagree, the
 page is wrong. The branch does not follow the code: it says what the mod is
 meant to do.
 
+Both are written in English, like the documents `mod init` starts with.
+
 ## Where to work
 
 The branch is checked out apart from the code. Find a worktree of it with
@@ -90,8 +92,10 @@ It must read offline, from Pages, or from a copy sent by mail:
 - links people follow (`<a href>`) are fine: they load nothing;
 - colors as CSS variables on `:root`, redefined under
   `@media (prefers-color-scheme: dark)`, with an explicit `body` background;
-- readable on a phone: a 16px side gutter, no horizontal scroll, wide tables
-  in their own scrolling box.
+- readable on a phone: a 16px side gutter, no horizontal scroll of the page.
+  A wide table and a diagram each scroll in their own box; a diagram keeps the
+  minimum width at which its labels stay legible instead of shrinking to the
+  screen.
 
 Check it, from the worktree of `design`, with the script next to this skill:
 `sh <this skill's directory>/check-page.sh docs/design/index.html`. It lists

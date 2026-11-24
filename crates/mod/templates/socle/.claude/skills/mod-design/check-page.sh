@@ -1,21 +1,31 @@
 #!/bin/sh
-# Checks that a design page is self-contained: one HTML file that loads
-# nothing besides itself, so that it reads offline, from GitHub Pages or from
-# a copy, with no CDN, font service or runtime behind it.
+# Checks that the pages of a design wiki are self-contained: each HTML file
+# loads nothing besides itself, so that the wiki reads offline, from GitHub
+# Pages or from a copy, with no CDN, font service or runtime behind it.
 #
-# Usage: check-page.sh <index.html>
-# Exit codes: 0 self-contained, 1 something is loaded, 2 usage.
+# Usage: check-page.sh <page.html>...
+# Exit codes: 0 every page self-contained, 1 something is loaded, 2 usage.
 #
-# Allowed: `data:` URIs, `#` fragments, and links people follow (`<a href>`).
+# Allowed: `data:` URIs, `#` fragments, and links people follow (`<a href>`),
+# to other pages too.
 # Refused: any other `src`, `srcset` candidate, `poster`, `data`, `href` or
 # `background` of an element that loads it, CSS `url()` and `@import`, module
 # imports, workers, and network calls from scripts.
 
-page=${1:-}
-if [ -z "$page" ] || [ ! -f "$page" ]; then
-  echo "usage: check-page.sh <index.html>" >&2
+if [ "$#" -eq 0 ]; then
+  echo "usage: check-page.sh <page.html>..." >&2
   exit 2
 fi
+for page in "$@"; do
+  if [ ! -f "$page" ]; then
+    echo "usage: check-page.sh <page.html>...: $page is not a file" >&2
+    exit 2
+  fi
+done
+
+# Checks one page; prints what it loads and returns 1 when it loads anything.
+check() {
+page=$1
 
 # One line, so that a tag split over several lines is still one match.
 text=$(tr '\r\n\t' '   ' <"$page")
@@ -54,6 +64,13 @@ problems=$(
 if [ -n "$problems" ]; then
   printf '%s\n' "$problems" | while IFS= read -r line; do echo "$page: $line"; done
   echo "$page is not self-contained: inline what it loads (styles, scripts, SVG), or embed it as a data: URI" >&2
-  exit 1
+  return 1
 fi
 echo "$page is self-contained"
+}
+
+status=0
+for page in "$@"; do
+  check "$page" || status=1
+done
+exit $status

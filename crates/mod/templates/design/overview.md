@@ -5,13 +5,13 @@ documents; this branch does not follow the code.
 
 These Markdown files are the design for agents. The HTML pages next to them
 are the same design as a wiki for developers, built by the `mod-design` skill:
-this document becomes its home page (`index.html`), and each other document
-(`NN-<subject>.md`) a page of its own. Edit the documents, never the pages by
-hand.
+this document becomes its home page (`index.html`), each feature a folder
+whose `00-overview.md` becomes its page, and each other document a sub-page.
+Edit the documents, never the pages by hand.
 
-## Mechanics
+## Features
 
-One document per mechanic, listed here with what it answers.
+One folder per feature, listed here with what it does in game.
 
 ## Blocks and items
 

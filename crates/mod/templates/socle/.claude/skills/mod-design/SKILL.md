@@ -1,13 +1,14 @@
 ---
 name: mod-design
-description: Build or update the design wiki of this mod, the HTML pages of `docs/design/` on the `design` branch (home page `index.html`, one page per subject), from the design documents next to them (`docs/design/*.md`), as self-contained pages that developers read without Claude, published by GitHub Pages. Use when the design documents changed and the pages must follow, when asked to build, refresh or rework the design, or when someone finds it unclear or thin ("too much text", "I cannot see how the sides talk", "it lacks detail", "split it into pages"). Not for writing the design itself, which happens in the Markdown documents.
+description: Build or update the design wiki of this mod, the HTML pages of `docs/design/` on the `design` branch (a tree: the home page `index.html`, a page per feature, sub-pages, each saying what happens in game before how it is built), from the design documents next to them (`docs/design/**/*.md`), as self-contained pages that developers read without Claude, published by GitHub Pages. Use when the design documents changed and the pages must follow, when asked to build, refresh or rework the design, or when someone finds it unclear or thin ("too much text", "I cannot see how the sides talk", "it lacks detail", "split it into pages", "everything is at the same level", "mixes functional and technical"). Not for writing the design itself, which happens in the Markdown documents.
 ---
 
 # Design wiki of the mod
 
 The `design` branch holds the design of the mod twice:
 
-- the Markdown documents of `docs/design/`, for agents. They are the source;
+- the Markdown documents of `docs/design/` and its folders, for agents. They
+  are the source;
 - the HTML pages next to them, the same design as a wiki for developers.
   GitHub Pages serves it at `https://<owner>.github.io/<repository>/design/`,
   whose home is `index.html`.
@@ -39,19 +40,50 @@ months later. They have not followed the conversations that produced the
 design. They open the home page, understand the mod at a glance, then go down
 into the page of the part they work on, and build it from that page alone.
 
-- **The home page** (`index.html`, from `00-overview.md`) stays at the macro
-  level: what the mod adds and what the player does with it, one diagram of
-  the whole (the main parts and how they connect), the glossary, the map of
-  the pages with one line each saying what it answers, and the open
+The wiki is a tree, not a flat list:
+
+- **The home page** (`index.html`, from `00-overview.md`) stays at the level
+  of the mod: what it adds and what the player does with it, one diagram of
+  the whole, its features with one line each, the glossary, and the open
   questions with a link to each.
-- **One page per subject** (`<subject>.html`, from `NN-<subject>.md`): a
-  mechanic, a system, the sides, saving, the blocks and items, the config.
-  It goes into the detail: how it works step by step, every decision with its
-  reason and the options ruled out, the edge cases, what is still open. A
-  subject too big for one page splits into several.
-- **Every page** has the same navigation at the top: the home, then the other
-  pages. A link points to the page that holds a subject rather than repeating
-  it: one subject, one place.
+- **One page per feature** (`<feature>/index.html`, from
+  `<feature>/00-overview.md`): a part of the mod a player can name (a mob, a
+  mechanic, a block family, a system such as ownership), at the level of the
+  feature: what it does in game, one diagram of how its parts fit, and its
+  sub-pages. A feature not designed yet still gets its page, saying what is
+  already known.
+- **Sub-pages** (`<feature>/<subject>.html`, from `<feature>/NN-<subject>.md`)
+  go into the detail of one part of the feature: how it works step by step,
+  every decision with its reason and the options ruled out, the edge cases,
+  what is still open. A sub-page too big splits again, one level down.
+- **Pages for the whole mod** (sides, config, blocks and items) sit at the
+  top level, next to the features, and link to the features for their detail.
+
+The folders of `docs/design/` follow the tree, Markdown documents and HTML
+pages side by side. Every page carries the same navigation: the whole tree
+(a side column on a wide screen, a collapsible block on a phone, with
+`<details>`, no script), with the current page marked, and a breadcrumb
+(Home › Feature › Sub-page). A link points to the page that holds a subject
+rather than repeating it: one subject, one place.
+
+## In game first, then how it is built
+
+A design mixes two things: what the mod does in game, and how it is built.
+Each page separates them, in that order:
+
+- **In game** comes first: what the player sees and does, the rules, the
+  states, as a player or a designer would describe them, with no class name.
+- **How it is built** comes after: the classes, events, packets and data
+  that make it happen, and the vanilla or library code it relies on.
+
+The two parts are marked as such on the page (headings and a visible
+label), so a reader always knows which one they are in. A page with nothing
+in game (how the client shows an entity, how data is saved) is a technical
+page and says so under its title; a page of a feature never starts with the
+technical part.
+
+In the documents, the same split: `## In game`, then `## How it is built`,
+each with its own sub-headings.
 
 Detail is what makes the design buildable. A design that says what without
 saying how leaves the developer to rediscover the how: show the mechanism
@@ -86,8 +118,8 @@ night loses 4 hearts") shows a rule better than its wording.
 
 Pages a mod usually has, besides the home:
 
-- **One page per mechanic**: its diagrams, its rules, what triggers it and
-  what it changes.
+- **One page per feature**, with its sub-pages: its diagrams, its rules,
+  what triggers it and what it changes.
 - **Blocks and items**: a table with id, what it does, how it is obtained
   (recipe, loot, trade), and its notable properties. A crafting recipe is
   drawn as the 3x3 grid of the game. A texture of the mod may appear as a
@@ -129,16 +161,17 @@ The wiki must read offline, from Pages, or from a copy of the folder:
   screen.
 
 Check them, from the worktree of `design`, with the script next to this skill:
-`sh <this skill's directory>/check-page.sh docs/design/*.html`. It lists
-everything a page loads; fix each one until it says every page is
+`find docs/design -name '*.html' -exec sh <this skill's directory>/check-page.sh {} +`.
+It lists everything a page loads; fix each one until it says every page is
 self-contained.
 
 ## Steps
 
 1. Read every document of `docs/design/`, and the current pages if they are
    not the starter one.
-2. Plan the wiki: the home and one page per subject, one document each. When a
-   document holds several subjects, split it first.
+2. Plan the tree: the home, the features and their sub-pages, the pages for
+   the whole mod, one document each. When a document holds several subjects,
+   or mixes a feature with the whole mod, split it first.
 3. Write the pages. When they exist, keep what still holds and rework around
    it; a diagram that is no longer true goes, or changes with the decision
    behind it.
@@ -147,9 +180,10 @@ self-contained.
    width, light and dark theme.
 6. For a first version or a rework, have a fresh agent read the wiki cold,
    with only the path of the home page and who the reader is: what it
-   understood from the home page alone, then whether it could build a given
-   part from its page, and what is unclear, missing, too long or badly
-   displayed. It changes nothing; you decide what to fix.
+   understood from the home page alone, whether it found the page of a given
+   part through the tree, whether it could tell what happens in game from how
+   it is built, whether it could build that part from its page, and what is
+   unclear, missing, too long or badly displayed. It changes nothing; you decide what to fix.
 7. Commit on `design` and push it. Pages publishes the wiki within minutes.
    When `origin` has no `design` branch yet, do not push it: on an empty
    repository it would become the default branch. `mod setup` pushes it once

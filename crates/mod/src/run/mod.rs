@@ -1,9 +1,11 @@
 //! `mod run`: the mod in the game, with extra mods and resource packs from
-//! Modrinth, in a run directory under `runs/` (ignored by git).
+//! Modrinth, GitHub releases or the repository, in a run directory under `runs/` (ignored
+//! by git).
 //!
 //! - [`prepare`] resolves what is asked through the shared resolution
-//!   ([`mc_core::resolve`]), downloads it into `<run dir>/mods` and
-//!   `<run dir>/resourcepacks`, removes what is no longer asked, enables the
+//!   ([`mc_core::resolve`]), downloads it, or copies the local files, into
+//!   `<run dir>/mods` and `<run dir>/resourcepacks`, removes what is no longer
+//!   asked, enables the
 //!   resource packs and writes the game options in `options.txt`;
 //! - [`launch`] starts the loader's dev client through the repository's
 //!   Gradle wrapper, with the run directory as game directory
@@ -29,13 +31,14 @@ use std::time::{Duration, Instant};
 use mc_core::error::Context as _;
 use mc_core::hash::{copy_hashing, hash_file};
 use mc_core::model::entry::{Entry, Hashes, Kind, Pack, Support};
+use mc_core::platform::github::GitHub;
 use mc_core::platform::modrinth::Modrinth;
 use mc_core::platform::{Download, Platform, Registry};
 
 use crate::error::{Error, Result};
 use crate::model::mod_toml::Loader;
 use crate::model::socle::Versions;
-use crate::model::test_profile::Wanted;
+use crate::model::test_profile::{Item, LOCAL, Wanted};
 
 /// Directory of the runs, at the repository root, ignored by git.
 pub const RUNS: &str = "runs";
@@ -58,17 +61,22 @@ pub struct Plan {
     /// The run directory, absolute.
     pub dir: PathBuf,
     pub loader: Loader,
-    pub mods: Vec<Wanted>,
-    pub packs: Vec<Wanted>,
+    pub mods: Vec<Item>,
+    pub packs: Vec<Item>,
+    /// The directory of the local files the items name.
+    pub local: PathBuf,
     /// Game options for `options.txt`.
     pub options: Vec<(String, String)>,
     /// Whether to start a dev server and join it.
     pub server: bool,
 }
 
-/// The platforms `mod run` resolves from: Modrinth.
+/// The platforms `mod run` resolves from: Modrinth and GitHub releases.
 pub fn builtin() -> Registry {
-    Registry::new(vec![Box::new(Modrinth::default())])
+    Registry::new(vec![
+        Box::new(Modrinth::default()),
+        Box::new(GitHub::default()),
+    ])
 }
 
 /// What the platforms resolve against: the pinned Minecraft and loader.
@@ -100,11 +108,15 @@ pub struct Ports {
 /// server's ports.
 pub fn prepare(plan: &Plan, pack: &Pack, registry: &Registry) -> Result<Option<Ports>> {
     fs::create_dir_all(&plan.dir).context(format!("creating {}", plan.dir.display()))?;
-    let mods = resolve_all(registry, pack, &plan.mods, Kind::Mod)?;
-    let packs = resolve_all(registry, pack, &plan.packs, Kind::Resourcepack)?;
-    let on = |side: fn(&Entry) -> Support| -> Vec<&(&dyn Platform, Entry)> {
+    let mods = resolve_items(registry, pack, &plan.local, &plan.mods, Kind::Mod)?;
+    let packs = resolve_items(registry, pack, &plan.local, &plan.packs, Kind::Resourcepack)?;
+    // A local mod goes to both sides, as any jar no platform describes.
+    let on = |side: fn(&Entry) -> Support| -> Vec<&File> {
         mods.iter()
-            .filter(|(_, e)| side(e) != Support::Unsupported)
+            .filter(|f| match &f.origin {
+                Origin::Platform(_, entry) => side(entry) != Support::Unsupported,
+                Origin::Local(_) => true,
+            })
             .collect()
     };
     let client_mods = plan.dir.join(Kind::Mod.dir());
@@ -116,7 +128,7 @@ pub fn prepare(plan: &Plan, pack: &Pack, registry: &Registry) -> Result<Option<P
         &packs,
         None,
     )?;
-    let pack_names: Vec<&str> = packs.iter().map(|(_, e)| file_name(e)).collect();
+    let pack_names: Vec<&str> = packs.iter().map(|f| f.name.as_str()).collect();
     files::write_options(&plan.dir, &pack_names, &plan.options)?;
 
     if !plan.server {
@@ -137,49 +149,105 @@ pub fn prepare(plan: &Plan, pack: &Pack, registry: &Registry) -> Result<Option<P
     Ok(Some(ports))
 }
 
-/// The entries of `wanted`, each with the platform that knows it.
-fn resolve_all<'a>(
-    registry: &'a Registry,
-    pack: &Pack,
-    wanted: &[Wanted],
-    kind: Kind,
-) -> Result<Vec<(&'a dyn Platform, Entry)>> {
-    wanted
-        .iter()
-        .map(|w| resolve(registry, pack, w, kind))
-        .collect()
+/// A file a run directory holds.
+struct File<'a> {
+    name: String,
+    sha512: String,
+    origin: Origin<'a>,
 }
 
-/// Makes `dir` hold the files of `entries` and no other file of `kind`:
-/// a file already there with the same content is kept, one in `from` is
-/// linked, any other is downloaded.
-fn place(
-    dir: &Path,
+enum Origin<'a> {
+    /// Downloaded from the platform that knows the entry.
+    Platform(&'a dyn Platform, Entry),
+    /// Copied from the repository.
+    Local(PathBuf),
+}
+
+/// The files of `items`, each named once in the directory of `kind`.
+fn resolve_items<'a>(
+    registry: &'a Registry,
+    pack: &Pack,
+    local: &Path,
+    items: &[Item],
     kind: Kind,
-    entries: &[&(&dyn Platform, Entry)],
-    from: Option<&Path>,
-) -> Result<()> {
-    let same = |path: &Path, entry: &Entry| {
-        hash_file(path).is_ok_and(|h| h.sha512.eq_ignore_ascii_case(&entry.hashes.sha512))
+) -> Result<Vec<File<'a>>> {
+    let mut files: Vec<File> = Vec::new();
+    for item in items {
+        let file = match item {
+            Item::Platform(wanted) => {
+                let (platform, entry) = resolve(registry, pack, wanted, kind)?;
+                File {
+                    name: file_name(&entry).to_owned(),
+                    sha512: entry.hashes.sha512.clone(),
+                    origin: Origin::Platform(platform, entry),
+                }
+            }
+            Item::Local(name) => {
+                let path = local.join(name);
+                let hashes = hash_file(&path).map_err(|e| {
+                    Error::usage(
+                        format!("cannot read `{LOCAL}/{name}` ({}): {e}", path.display()),
+                        "put the file back, or remove it from the test profile",
+                    )
+                })?;
+                File {
+                    name: name.clone(),
+                    sha512: hashes.sha512,
+                    origin: Origin::Local(path),
+                }
+            }
+        };
+        if files.iter().any(|f| f.name == file.name) {
+            return Err(Error::usage(
+                format!(
+                    "two {}s of the run have the file name `{}`",
+                    kind.noun(),
+                    file.name
+                ),
+                format!("rename the file in {LOCAL}/, or remove one of them"),
+            ));
+        }
+        files.push(file);
+    }
+    Ok(files)
+}
+
+/// Makes `dir` hold `wanted` and no other file of `kind`: a file already
+/// there with the same content is kept, one in `from` is linked, a local one
+/// is copied, any other is downloaded.
+fn place(dir: &Path, kind: Kind, wanted: &[&File], from: Option<&Path>) -> Result<()> {
+    let same = |path: &Path, sha512: &str| {
+        hash_file(path).is_ok_and(|h| h.sha512.eq_ignore_ascii_case(sha512))
     };
     let mut names = Vec::new();
-    for (platform, entry) in entries {
-        let name = file_name(entry);
-        let target = dir.join(name);
-        if !same(&target, entry) {
+    for file in wanted {
+        let target = dir.join(&file.name);
+        if !same(&target, &file.sha512) {
             let _ = fs::remove_file(&target);
-            match from.map(|d| d.join(name)).filter(|p| same(p, entry)) {
-                Some(source) => {
+            let linked = from
+                .map(|d| d.join(&file.name))
+                .filter(|p| same(p, &file.sha512));
+            match (linked, &file.origin) {
+                (Some(source), _) => {
                     fs::create_dir_all(dir).context(format!("creating {}", dir.display()))?;
                     mc_core::server::link_or_copy(&source, &target).map_err(|reason| {
                         Error::internal(reason, "check the permissions of the run directory")
                     })?
                 }
-                None => download(*platform, entry, &target)?,
+                // A copy, not a link: the run cannot change the repository's file.
+                (None, Origin::Local(source)) => {
+                    fs::create_dir_all(dir).context(format!("creating {}", dir.display()))?;
+                    fs::copy(source, &target).context(format!(
+                        "copying {} to {}",
+                        source.display(),
+                        target.display()
+                    ))?;
+                }
+                (None, Origin::Platform(platform, entry)) => download(*platform, entry, &target)?,
             }
         }
         println!("{} {}", kind.noun(), target.display());
-        names.push(name);
+        names.push(file.name.as_str());
     }
     files::keep_only(dir, kind, &names)
 }

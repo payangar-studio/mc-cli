@@ -1,5 +1,7 @@
 //! `test-profiles/<name>.toml`: a named set of extra mods, resource packs and
-//! game options to run the mod with, versioned with the mod. `mod run
+//! game options to run the mod with, versioned with the mod. Its mods and
+//! resource packs come from Modrinth, from GitHub releases, or from
+//! `test-profiles/local/`, tracked by git, for a file hosted nowhere. `mod run
 //! --profile <name>` runs it in `runs/<name>/`, ignored by git. A profile with
 //! `ci = true` also runs in the mod's CI, as Fabric gametests with its mods
 //! (`.github/workflows/mod-tests.yml`).
@@ -10,10 +12,14 @@ use serde::Deserialize;
 
 use crate::error::{Error, Result};
 use crate::model::mod_toml::Loader;
+use mc_core::model::entry::Kind;
 use mc_core::model::{parse_toml, read_file};
+use mc_core::platform::github;
 
 /// Directory of the profiles, at the repository root.
 pub const DIR: &str = "test-profiles";
+/// Directory of the local files the profiles name, inside [`DIR`].
+pub const LOCAL: &str = "local";
 /// The game option of the graphics preset.
 const GRAPHICS_PRESET: &str = "graphicsPreset";
 
@@ -27,11 +33,14 @@ pub struct TestProfile {
     /// Whether the mod's CI runs the Fabric gametests with the profile's mods.
     #[serde(default)]
     pub ci: bool,
-    /// Modrinth mods, as `<slug>@<version>`: pinned.
+    /// Mods: Modrinth ones as `<slug>@<version>`, GitHub ones as
+    /// `github:<owner>/<repo>@<tag>[/<file>]` (both pinned), local ones as
+    /// `local/<file>`.
     #[serde(default)]
     pub mods: Vec<String>,
-    /// Modrinth resource packs, as `<slug>` or `<slug>@<version>`, enabled in
-    /// this order, the last one on top.
+    /// Resource packs: Modrinth ones as `<slug>` or `<slug>@<version>`,
+    /// GitHub ones as `github:<owner>/<repo>[@<tag>[/<file>]]`, local ones as
+    /// `local/<file>`; enabled in this order, the last one on top.
     #[serde(default)]
     pub packs: Vec<String>,
     /// Game options, written to `options.txt` as `<key>:<value>`.
@@ -43,6 +52,11 @@ impl TestProfile {
     /// The file of the profile `name`.
     pub fn path(root: &Path, name: &str) -> PathBuf {
         root.join(DIR).join(format!("{name}.toml"))
+    }
+
+    /// The directory of the local files.
+    pub fn local_dir(root: &Path) -> PathBuf {
+        root.join(DIR).join(LOCAL)
     }
 
     pub fn load(root: &Path, name: &str) -> Result<Self> {
@@ -68,19 +82,31 @@ impl TestProfile {
                 "a CI profile runs Fabric's gametests: set `loader = \"fabric\"`, or remove `ci = true`",
             ));
         }
-        for wanted in profile.mods.iter().chain(&profile.packs) {
-            Wanted::parse(wanted)?;
-        }
-        // Versioned with the mod, a profile runs the same mods at each commit.
-        for wanted in &profile.mods {
-            let Wanted { slug, version } = Wanted::parse(wanted)?;
-            if version.is_none() {
-                return Err(Error::usage(
-                    format!("mod `{slug}` has no version in test profile `{name}`"),
-                    format!(
-                        "pin it as `{slug}@<version>`, a Modrinth version number or id, such as `sodium@mc26.3-0.9.2-fabric`"
-                    ),
-                ));
+        for (list, kind) in [
+            (&profile.mods, Kind::Mod),
+            (&profile.packs, Kind::Resourcepack),
+        ] {
+            for text in list {
+                match Item::parse(text)? {
+                    // Versioned with the mod, a profile runs the same mods at
+                    // each commit.
+                    Item::Platform(wanted) if kind == Kind::Mod && !wanted.is_pinned() => {
+                        let slug = &wanted.slug;
+                        let hint = if slug.starts_with(github::PREFIX) {
+                            format!("pin it as `{slug}@<tag>`, the tag of one of its releases")
+                        } else {
+                            format!(
+                                "pin it as `{slug}@<version>`, a Modrinth version number or id, such as `sodium@mc26.3-0.9.2-fabric`"
+                            )
+                        };
+                        return Err(Error::usage(
+                            format!("mod `{slug}` has no version in test profile `{name}`"),
+                            hint,
+                        ));
+                    }
+                    Item::Local(file) => check_local(root, name, &file, kind)?,
+                    Item::Platform(_) => {}
+                }
             }
         }
         for (key, value) in &profile.options {
@@ -144,8 +170,65 @@ pub fn check_name(name: &str) -> Result<()> {
     }
 }
 
+/// A local file of profile `name` is a file of `kind` in the local directory.
+fn check_local(root: &Path, name: &str, file: &str, kind: Kind) -> Result<()> {
+    let key = match kind {
+        Kind::Mod => "mods",
+        Kind::Resourcepack => "packs",
+    };
+    if Kind::of_file_name(file) != Some(kind) {
+        return Err(Error::usage(
+            format!(
+                "`{LOCAL}/{file}` of test profile `{name}` is not a {}",
+                kind.noun()
+            ),
+            format!("list a `.{}` file under `{key}`", kind.extension()),
+        ));
+    }
+    if !TestProfile::local_dir(root).join(file).is_file() {
+        return Err(Error::usage(
+            format!("`{LOCAL}/{file}` of test profile `{name}` is missing"),
+            format!("put the file in {DIR}/{LOCAL}/ and commit it, or remove it from the profile"),
+        ));
+    }
+    Ok(())
+}
+
+/// A mod or a resource pack of a profile: from a platform, or a file of the
+/// local directory, written `local/<file>`. A Modrinth slug never holds a
+/// `/`, and a GitHub query starts with `github:`: another item that holds a
+/// `/` is a path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Item {
+    Platform(Wanted),
+    /// The file name in the local directory.
+    Local(String),
+}
+
+impl Item {
+    pub fn parse(text: &str) -> Result<Self> {
+        if !text.contains('/') || text.trim().starts_with(github::PREFIX) {
+            return Wanted::parse(text).map(Self::Platform);
+        }
+        match text.trim().strip_prefix("local/") {
+            Some(file) if !file.is_empty() && !file.contains(['/', '\\']) => {
+                Ok(Self::Local(file.to_owned()))
+            }
+            _ => Err(Error::usage(
+                format!(
+                    "`{text}` is neither a Modrinth project, a GitHub release nor a file of {DIR}/{LOCAL}/"
+                ),
+                format!(
+                    "write a Modrinth slug, such as `sodium@<version>`, `github:<owner>/<repo>@<tag>`, or `{LOCAL}/<file>` for a file of {DIR}/{LOCAL}/"
+                ),
+            )),
+        }
+    }
+}
+
 /// A mod or a resource pack asked for: a Modrinth slug, and a version when
-/// pinned (its version number or id on Modrinth).
+/// pinned (its version number or id on Modrinth); or a GitHub query whole,
+/// whose tag the platform reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Wanted {
     pub slug: String,
@@ -154,6 +237,13 @@ pub struct Wanted {
 
 impl Wanted {
     pub fn parse(text: &str) -> Result<Self> {
+        if text.trim().starts_with(github::PREFIX) {
+            github::check_query(text)?;
+            return Ok(Self {
+                slug: text.trim().to_owned(),
+                version: None,
+            });
+        }
         let (slug, version) = match text.split_once('@') {
             Some((slug, version)) => (slug.trim(), Some(version.trim())),
             None => (text.trim(), None),
@@ -168,6 +258,11 @@ impl Wanted {
             slug: slug.to_owned(),
             version: version.map(str::to_owned),
         })
+    }
+
+    /// Whether it names one version: a Modrinth version, or a GitHub tag.
+    pub fn is_pinned(&self) -> bool {
+        self.version.is_some() || self.slug.starts_with(github::PREFIX) && self.slug.contains('@')
     }
 }
 
@@ -277,6 +372,74 @@ mod tests {
 
         write(dir.path(), "packs", "packs = [\"faithful-32x\"]\n");
         TestProfile::load(dir.path(), "packs").unwrap();
+
+        // A GitHub mod pins a release tag.
+        write(dir.path(), "gh", "mods = [\"github:o/a\"]\n");
+        let err = TestProfile::load(dir.path(), "gh").unwrap_err();
+        assert!(
+            err.to_string().contains("`github:o/a` has no version"),
+            "{err}"
+        );
+        assert!(err.hint().contains("github:o/a@<tag>"), "{}", err.hint());
+        write(
+            dir.path(),
+            "gh",
+            "mods = [\"github:o/a@v1/a-fabric.jar\"]\npacks = [\"github:o/p\"]\n",
+        );
+        let profile = TestProfile::load(dir.path(), "gh").unwrap();
+        assert_eq!(
+            Item::parse(&profile.mods[0]).unwrap(),
+            Item::Platform(Wanted {
+                slug: "github:o/a@v1/a-fabric.jar".into(),
+                version: None
+            })
+        );
+    }
+
+    /// A file no platform serves is listed from `test-profiles/local/`, in
+    /// the same list as the Modrinth ones, so that resource packs keep one
+    /// order.
+    #[test]
+    fn a_profile_names_local_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let local = TestProfile::local_dir(dir.path());
+        std::fs::create_dir_all(&local).unwrap();
+        for file in ["touch.jar", "ours.zip"] {
+            std::fs::write(local.join(file), b"x").unwrap();
+        }
+        write(
+            dir.path(),
+            "local",
+            "mods = [\"local/touch.jar\", \"sodium@0.9.2\"]\npacks = [\"faithful\", \"local/ours.zip\"]\n",
+        );
+        let profile = TestProfile::load(dir.path(), "local").unwrap();
+        assert_eq!(
+            Item::parse(&profile.packs[1]).unwrap(),
+            Item::Local("ours.zip".into())
+        );
+
+        for (text, expected, hint) in [
+            (
+                "mods = [\"local/ours.zip\"]\n",
+                "`local/ours.zip` of test profile `bad` is not a mod",
+                "`.jar` file under `mods`",
+            ),
+            (
+                "packs = [\"local/touch.jar\"]\n",
+                "is not a resource pack",
+                "`.zip` file under `packs`",
+            ),
+            (
+                "mods = [\"local/gone.jar\"]\n",
+                "`local/gone.jar` of test profile `bad` is missing",
+                "test-profiles/local/",
+            ),
+        ] {
+            write(dir.path(), "bad", text);
+            let err = TestProfile::load(dir.path(), "bad").unwrap_err();
+            assert!(err.to_string().contains(expected), "{text}: {err}");
+            assert!(err.hint().contains(hint), "{text}: {}", err.hint());
+        }
     }
 
     #[test]
@@ -310,7 +473,22 @@ mod tests {
             ("loader = \"forge\"\n", "is invalid"),
             ("ci = \"yes\"\n", "is invalid"),
             ("mods = [\"sodium@\"]\n", "is not a Modrinth project"),
-            ("packs = [\"https://x/y\"]\n", "is not a Modrinth project"),
+            (
+                "packs = [\"https://x/y\"]\n",
+                "is neither a Modrinth project",
+            ),
+            (
+                "mods = [\"local/a/b.jar\"]\n",
+                "is neither a Modrinth project",
+            ),
+            (
+                "mods = [\"other/b.jar\"]\n",
+                "is neither a Modrinth project",
+            ),
+            (
+                "mods = [\"github:lithium@v1\"]\n",
+                "is not a GitHub repository",
+            ),
             ("[options]\nkeys = [1]\n", "option `keys`"),
             ("[options]\nlang = \"a\\nb\"\n", "cannot be written"),
         ] {

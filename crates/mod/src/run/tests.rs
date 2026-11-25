@@ -14,7 +14,7 @@ use mockito::{Matcher, Mock, Server, ServerGuard};
 use serde_json::json;
 
 use super::*;
-use crate::model::test_profile::Wanted;
+use crate::model::test_profile::Item;
 
 #[path = "../../../modpack/tests/common/mod.rs"]
 mod common;
@@ -135,8 +135,8 @@ impl Api {
     }
 }
 
-fn wanted(list: &[&str]) -> Vec<Wanted> {
-    list.iter().map(|w| Wanted::parse(w).unwrap()).collect()
+fn wanted(list: &[&str]) -> Vec<Item> {
+    list.iter().map(|w| Item::parse(w).unwrap()).collect()
 }
 
 fn plan(dir: &Path, mods: &[&str], packs: &[&str], server: bool) -> Plan {
@@ -145,6 +145,7 @@ fn plan(dir: &Path, mods: &[&str], packs: &[&str], server: bool) -> Plan {
         loader: Loader::Fabric,
         mods: wanted(mods),
         packs: wanted(packs),
+        local: dir.join("local"),
         options: vec![("renderDistance".into(), "8".into())],
         server,
     }
@@ -255,6 +256,150 @@ fn what_is_no_longer_asked_is_removed() {
         fs::read_to_string(dir.path().join("options.txt")).unwrap(),
         "onboardAccessibility:false\nrenderDistance:8\nresourcePacks:[\"vanilla\"]\n"
     );
+}
+
+/// A GitHub release's file of the loader goes to both sides, as any jar no
+/// platform describes, and the next run downloads nothing.
+#[test]
+fn github_files_are_downloaded_once_and_placed_on_both_sides() {
+    let mut api = Api::new();
+    let url = api.server.url();
+    let assets: Vec<_> = ["touch-fabric-1.0.jar", "touch-neoforge-1.0.jar"]
+        .map(|name| {
+            json!({
+                "name": name, "size": name.len(),
+                "browser_download_url": format!("{url}/gh/{name}"),
+            })
+        })
+        .into();
+    let release = json!({
+        "tag_name": "v1", "draft": false, "prerelease": false, "assets": assets,
+    });
+    let _release = api
+        .server
+        .mock("GET", "/repos/o/touch/releases/tags/v1")
+        .with_body(release.to_string())
+        .create();
+    let file = api
+        .server
+        .mock("GET", "/gh/touch-fabric-1.0.jar")
+        .with_body("touch-fabric-1.0.jar")
+        .expect(1)
+        .create();
+    let cache = tempfile::tempdir().unwrap();
+    let platforms: Vec<Box<dyn mc_core::platform::Platform>> = vec![
+        Box::new(Modrinth::new(&url)),
+        Box::new(mc_core::platform::github::GitHub::new(
+            &url,
+            cache.path().to_path_buf(),
+        )),
+    ];
+    let registry = Registry::new(platforms);
+    let dir = tempfile::tempdir().unwrap();
+    let plan = plan(dir.path(), &["github:o/touch@v1"], &[], true);
+
+    for _ in 0..2 {
+        prepare(&plan, &pack(), &registry).unwrap();
+        for mods in ["mods", "server/mods"] {
+            assert_eq!(names(&dir.path().join(mods)), ["touch-fabric-1.0.jar"]);
+        }
+    }
+    file.assert();
+}
+
+/// A file of the profiles' local directory is copied to both sides, in the
+/// packs' order, kept by the next run, replaced when it changes, and removed
+/// once no longer asked.
+#[test]
+fn local_files_are_placed_like_the_others() {
+    let mut api = Api::new();
+    let _files = [
+        api.file("lithium", "0.26.3", 1),
+        api.file("faithful", "1.0", 1),
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let local = dir.path().join("local");
+    fs::create_dir_all(&local).unwrap();
+    fs::write(local.join("touch.jar"), b"touch").unwrap();
+    fs::write(local.join("ours.zip"), b"ours").unwrap();
+    let registry = api.registry();
+    let local_plan = plan(
+        dir.path(),
+        &["local/touch.jar", "lithium"],
+        &["local/ours.zip", "faithful"],
+        true,
+    );
+
+    for _ in 0..2 {
+        prepare(&local_plan, &pack(), &registry).unwrap();
+        for mods in ["mods", "server/mods"] {
+            assert_eq!(
+                names(&dir.path().join(mods)),
+                ["lithium-0.26.3.jar", "touch.jar"]
+            );
+        }
+        assert_eq!(
+            names(&dir.path().join("resourcepacks")),
+            ["faithful-1.0.zip", "ours.zip"]
+        );
+        let options = fs::read_to_string(dir.path().join("options.txt")).unwrap();
+        assert!(
+            options.contains(
+                "resourcePacks:[\"vanilla\",\"file/ours.zip\",\"file/faithful-1.0.zip\"]"
+            ),
+            "{options}"
+        );
+    }
+
+    fs::write(local.join("touch.jar"), b"touch 2").unwrap();
+    prepare(&local_plan, &pack(), &registry).unwrap();
+    for mods in ["mods", "server/mods"] {
+        assert_eq!(
+            fs::read(dir.path().join(mods).join("touch.jar")).unwrap(),
+            b"touch 2"
+        );
+    }
+
+    prepare(
+        &plan(dir.path(), &["lithium"], &["faithful"], true),
+        &pack(),
+        &registry,
+    )
+    .unwrap();
+    for mods in ["mods", "server/mods"] {
+        assert_eq!(names(&dir.path().join(mods)), ["lithium-0.26.3.jar"]);
+    }
+    assert_eq!(
+        names(&dir.path().join("resourcepacks")),
+        ["faithful-1.0.zip"]
+    );
+    assert_eq!(names(&local), ["ours.zip", "touch.jar"]);
+}
+
+/// Two files of one name would overwrite each other in the run directory.
+#[test]
+fn a_local_file_cannot_share_a_file_name() {
+    let api = Api::new();
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("local")).unwrap();
+    fs::write(dir.path().join("local/lithium-0.26.3.jar"), b"x").unwrap();
+    let err = prepare(
+        &plan(
+            dir.path(),
+            &["lithium", "local/lithium-0.26.3.jar"],
+            &[],
+            false,
+        ),
+        &pack(),
+        &api.registry(),
+    )
+    .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("two mods of the run have the file name `lithium-0.26.3.jar`"),
+        "{err}"
+    );
+    assert_eq!(err.kind(), mc_core::error::ErrorKind::Usage);
 }
 
 #[test]

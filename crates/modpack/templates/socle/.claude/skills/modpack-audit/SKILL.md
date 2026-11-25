@@ -65,7 +65,7 @@ Where the jar comes from decides whether another machine can get it:
 - `[entries.modrinth]` and its `downloads`: Modrinth hosts it.
 - `[entries.curseforge]`: CurseForge hosts it. Downloading it needs the CurseForge API key.
 - `url` only: a direct link. Check that it points to the author's official release (their GitHub or GitLab releases, their site), and say what you found.
-- None of these: the jar exists on this machine only. Warn: `modpack install` cannot fetch it elsewhere; give it a URL with `modpack add mods/<file> --url <url>`.
+- None of these: the jar exists on this machine only. Warn: `modpack install` cannot fetch it elsewhere; add it from its GitHub release with `modpack add github:<owner>/<repo>@<tag>` when it has one, else give it a URL with `modpack add mods/<file> --url <url>`.
 
 A mod with no `[entries.curseforge]` table may simply have been added while no CurseForge key was set. When it looks like a mod CurseForge hosts, say so: once the key is set (`modpack auth`, in the user's terminal), `modpack add mods/<file>` identifies the jar again on every platform and keeps its key and its variants.
 

@@ -25,6 +25,7 @@ use crate::page::{Listing, Page};
 pub mod curseforge;
 #[cfg(any(test, feature = "fake"))]
 pub mod fake;
+pub mod github;
 pub mod modrinth;
 
 /// The operations of the contract.

@@ -7,7 +7,7 @@
 On a machine set up with chezmoi, the catalogue installs `modpack`. Each release of this repository carries every binary of this repository, one archive each, `<binary>-<version>-x86_64-unknown-linux-musl.tar.gz` with its `.sha256`. By hand, on Linux x86_64:
 
 ```sh
-version=0.7.0
+version=0.7.1
 curl -LO "https://github.com/payangar-studio/mc-cli/releases/download/v$version/modpack-$version-x86_64-unknown-linux-musl.tar.gz"
 curl -LO "https://github.com/payangar-studio/mc-cli/releases/download/v$version/modpack-$version-x86_64-unknown-linux-musl.tar.gz.sha256"
 sha256sum -c "modpack-$version-x86_64-unknown-linux-musl.tar.gz.sha256"

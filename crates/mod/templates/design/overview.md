@@ -3,11 +3,15 @@
 What the mod does and why, decided before the code. The code follows these
 documents; this branch does not follow the code.
 
-These Markdown files are the design for agents. `index.html` is the same
-design as a page for people, built from them by the `mod-design` skill: edit
-the documents, never the page by hand.
+These Markdown files are the design for agents. The HTML pages next to them
+are the same design as a wiki for developers, built by the `mod-design` skill:
+this document becomes its home page (`index.html`), each feature a folder
+whose `00-overview.md` becomes its page, and each other document a sub-page.
+Edit the documents, never the pages by hand.
 
-## Mechanics
+## Features
+
+One folder per feature, listed here with what it does in game.
 
 ## Blocks and items
 

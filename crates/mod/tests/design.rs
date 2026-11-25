@@ -268,6 +268,45 @@ fn the_starter_page_is_self_contained() {
 }
 
 #[test]
+fn the_check_takes_every_page_of_the_wiki() {
+    let (_tmp, root) = init_repo();
+    let dir = root.join("wiki");
+    fs::create_dir_all(&dir).unwrap();
+    let home = dir.join("index.html");
+    let forms = dir.join("forms.html");
+    let broken = dir.join("saving.html");
+    fs::write(&home, "<a href=\"forms.html\">Forms</a>").unwrap();
+    fs::write(&forms, "<a href=\"index.html\">Home</a>").unwrap();
+    fs::write(&broken, "<img alt=\"\" src=\"chest.png\">").unwrap();
+    let run = |pages: &[&Path]| {
+        let output = Process::new("sh")
+            .arg(root.join(CHECK))
+            .args(pages)
+            .output()
+            .unwrap();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        (output.status.success(), text)
+    };
+
+    let (ok, output) = run(&[&home, &forms]);
+    assert!(ok, "links between pages load nothing: {output}");
+    let (ok, output) = run(&[&home, &broken, &forms]);
+    assert!(!ok, "{output}");
+    assert!(
+        output.contains("saving.html: loads a resource: \"chest.png\""),
+        "{output}"
+    );
+    assert!(
+        output.contains("forms.html is self-contained"),
+        "every page is checked: {output}"
+    );
+}
+
+#[test]
 fn the_check_refuses_a_page_that_loads_anything() {
     let (_tmp, root) = init_repo();
     for (defect, html) in [

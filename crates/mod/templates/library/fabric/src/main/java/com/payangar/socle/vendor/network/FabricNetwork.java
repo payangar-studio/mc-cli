@@ -1,5 +1,6 @@
 package com.payangar.socle.vendor.network;
 
+import net.fabricmc.fabric.api.event.Event;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerConfigurationConnectionEvents;
@@ -7,6 +8,7 @@ import net.fabricmc.fabric.api.networking.v1.ServerConfigurationNetworking;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 
@@ -31,7 +33,12 @@ public final class FabricNetwork {
         PayloadTypeRegistry.clientboundConfiguration().register(payloads.presenceType(), payloads.presenceCodec());
         PayloadTypeRegistry.clientboundPlay().register(payloads.syncType(), payloads.syncCodec());
 
-        ServerConfigurationConnectionEvents.CONFIGURE.register((handler, server) -> {
+        // Fabric API's registry sync refuses a client without Fabric in BEFORE_CONFIGURE, as soon as
+        // the mod registers content: the side check runs in a phase before it, so the client reads
+        // which mod it lacks.
+        Identifier sideCheck = Identifier.fromNamespaceAndPath(network.modId(), "side_check");
+        ServerConfigurationConnectionEvents.BEFORE_CONFIGURE.addPhaseOrdering(sideCheck, Event.DEFAULT_PHASE);
+        ServerConfigurationConnectionEvents.BEFORE_CONFIGURE.register(sideCheck, (handler, server) -> {
             boolean hasMod = ServerConfigurationNetworking.canSend(handler, payloads.presenceType());
             if (SideCheck.refuses(network.side(), hasMod)) {
                 handler.disconnect(SideCheck.missingOnClient(network.modId(), name(network.modId())));

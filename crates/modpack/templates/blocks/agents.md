@@ -21,7 +21,7 @@ This repository is a Minecraft modpack managed with `mc-cli` (`modpack`). The re
 | Prepare a fresh clone on this machine: git hooks, jars, Modrinth instance, default variant | `modpack setup [--no-launch]` |
 | Bring the socle of this repository to the CLI's version | `modpack update` |
 | See the state of the instance: loaded variant, drift, unknown files, stale manifest | `modpack status --json` |
-| Add a mod or a resource pack from Modrinth, CurseForge or a local file (`.jar` for a mod, `.zip` for a resource pack), to every variant or to the variants named (`--variant` repeats; `--variant default` alone: the default variant only) | `modpack add <mod> [--version <v>] [--variant <variant>]... [--with-deps]` |
+| Add a mod or a resource pack from Modrinth, CurseForge, a GitHub release (`github:<owner>/<repo>[@<tag>]`) or a local file (`.jar` for a mod, `.zip` for a resource pack), to every variant or to the variants named (`--variant` repeats; `--variant default` alone: the default variant only) | `modpack add <mod> [--version <v>] [--variant <variant>]... [--with-deps]` |
 | Remove a mod or a resource pack from the repository and from every variant (deleting its file does not) | `modpack remove <key>` |
 | Update the manifest after adding or changing a file in `mods/`, `resourcepacks/` or their `-local/` directories (a missing file keeps its entry) | `modpack manifest` |
 | Approve a local entry for publication, once its file is reviewed (a changed file loses its approval) | `modpack approve <key>` |

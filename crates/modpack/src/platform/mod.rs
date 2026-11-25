@@ -12,20 +12,24 @@ use std::path::{Path, PathBuf};
 pub use mc_core::platform::fake;
 pub use mc_core::platform::{
     Candidate, Capability, Download, Jar, Match, Operation, Platform, ProjectName, curseforge,
-    modrinth, unsupported,
+    github, modrinth, unsupported,
 };
 
 use crate::error::Result;
 use crate::model::manifest::{Entry, Pack};
 use curseforge::CurseForge;
+use github::GitHub;
 use modrinth::Modrinth;
 
 /// The platforms a modpack command asks, in the order they are tried.
 pub type Registry = mc_core::platform::Registry<dyn PackPlatform>;
 
-/// The platforms built into the CLI, in the order they are tried.
+/// The platforms built into the CLI, in the order they are tried. GitHub
+/// comes first: it answers only its own `github:` queries, without a call,
+/// which the others would look up as slugs.
 pub fn builtin() -> Registry {
     Registry::new(vec![
+        Box::new(GitHub::default()),
         Box::new(Modrinth::default()),
         Box::new(CurseForge::new()),
     ])
@@ -109,6 +113,10 @@ impl PackPlatform for Modrinth {
         mrpack::build(build)
     }
 }
+
+/// GitHub builds no pack: an entry from a release goes into a `.mrpack` by
+/// its URL, and CurseForge blocks it as any file it does not host.
+impl PackPlatform for GitHub {}
 
 impl PackPlatform for CurseForge {
     fn pack_eligibility(&self, entry: &Entry) -> Result<Eligibility> {

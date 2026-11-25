@@ -1,5 +1,5 @@
 //! `mod run`: the mod in the game, alone or with extra mods and resource
-//! packs from Modrinth: once (`--with`, `--pack`, in `runs/.one-shot/`,
+//! packs from Modrinth or GitHub releases: once (`--with`, `--pack`, in `runs/.one-shot/`,
 //! emptied first) or through a test profile (`--profile`, in `runs/<name>/`).
 //! `--server` adds a dedicated dev server the client joins. `--prepare-only`
 //! fills the run directory without starting the game: the mod's CI does it
@@ -20,10 +20,10 @@ pub struct Args {
     /// Test profile to run (test-profiles/<name>.toml), in runs/<name>/
     #[arg(long, value_name = "NAME", conflicts_with_all = ["with", "pack"])]
     pub profile: Option<String>,
-    /// Modrinth mod for this run only, as <slug> or <slug>@<version>; repeatable
+    /// Mod for this run only: from Modrinth as <slug>[@<version>], from GitHub as github:<owner>/<repo>[@<tag>]; repeatable
     #[arg(long = "with", value_name = "MOD")]
     pub with: Vec<String>,
-    /// Modrinth resource pack for this run only, as <slug> or <slug>@<version>; repeatable
+    /// Resource pack for this run only, written as for --with; repeatable
     #[arg(long = "pack", value_name = "RESOURCE_PACK")]
     pub pack: Vec<String>,
     /// Loader to run: the profile's, else the mod's first one
@@ -60,12 +60,12 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
         }
     };
     let loader = loader(&args, &profile, &module)?;
-    // Local files are a profile's: `--with` and `--pack` take Modrinth projects.
+    // Local files are a profile's: `--with` and `--pack` take platform projects.
     let items = |list: &[String]| {
         list.iter()
             .map(|w| {
                 if one_shot {
-                    Wanted::parse(w).map(Item::Modrinth)
+                    Wanted::parse(w).map(Item::Platform)
                 } else {
                     Item::parse(w)
                 }

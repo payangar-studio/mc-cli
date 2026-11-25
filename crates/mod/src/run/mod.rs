@@ -1,5 +1,5 @@
 //! `mod run`: the mod in the game, with extra mods and resource packs from
-//! Modrinth or from the repository, in a run directory under `runs/` (ignored
+//! Modrinth, GitHub releases or the repository, in a run directory under `runs/` (ignored
 //! by git).
 //!
 //! - [`prepare`] resolves what is asked through the shared resolution
@@ -31,6 +31,7 @@ use std::time::{Duration, Instant};
 use mc_core::error::Context as _;
 use mc_core::hash::{copy_hashing, hash_file};
 use mc_core::model::entry::{Entry, Hashes, Kind, Pack, Support};
+use mc_core::platform::github::GitHub;
 use mc_core::platform::modrinth::Modrinth;
 use mc_core::platform::{Download, Platform, Registry};
 
@@ -70,9 +71,12 @@ pub struct Plan {
     pub server: bool,
 }
 
-/// The platforms `mod run` resolves from: Modrinth.
+/// The platforms `mod run` resolves from: Modrinth and GitHub releases.
 pub fn builtin() -> Registry {
-    Registry::new(vec![Box::new(Modrinth::default())])
+    Registry::new(vec![
+        Box::new(Modrinth::default()),
+        Box::new(GitHub::default()),
+    ])
 }
 
 /// What the platforms resolve against: the pinned Minecraft and loader.
@@ -170,7 +174,7 @@ fn resolve_items<'a>(
     let mut files: Vec<File> = Vec::new();
     for item in items {
         let file = match item {
-            Item::Modrinth(wanted) => {
+            Item::Platform(wanted) => {
                 let (platform, entry) = resolve(registry, pack, wanted, kind)?;
                 File {
                     name: file_name(&entry).to_owned(),

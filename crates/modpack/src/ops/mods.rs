@@ -30,9 +30,9 @@ use crate::store::hash::{copy_hashing, hash_file};
 use crate::store::{file_path, write_atomic};
 
 /// Fields a platform table names its project by: `project_id` for Modrinth,
-/// `projectID` for CurseForge, `id` for the test platform. A table's
+/// `projectID` for CurseForge, `repo` for GitHub, `id` for the test platform. A table's
 /// `dependencies` lists such ids, on the same platform.
-const PROJECT_ID_FIELDS: [&str; 3] = ["project_id", "projectID", "id"];
+const PROJECT_ID_FIELDS: [&str; 4] = ["project_id", "projectID", "id", "repo"];
 
 /// What `modpack add` was asked.
 #[derive(Debug, Clone, Default)]
@@ -126,7 +126,10 @@ pub fn add(
             req.url.clone(),
             out,
         )?
-    } else if Kind::of_file_name(&req.mod_ref).is_some() && !req.mod_ref.contains("://") {
+    } else if Kind::of_file_name(&req.mod_ref).is_some()
+        && !req.mod_ref.contains("://")
+        && !req.mod_ref.starts_with(crate::platform::github::PREFIX)
+    {
         return Err(Error::usage(
             format!("no file at {}", req.mod_ref),
             "check the path to the file",
@@ -1266,6 +1269,15 @@ mod tests {
             .0
             .unwrap_err();
         assert!(err.to_string().contains("no file at missing.jar"));
+        // A GitHub query naming a release's file goes to the platforms.
+        let err = run_add(root.path(), &registry(), &request("github:o/a@v1/a.jar"))
+            .0
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("no version of `github:o/a@v1/a.jar`"),
+            "{err}"
+        );
     }
 
     #[test]

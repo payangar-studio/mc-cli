@@ -258,6 +258,55 @@ fn what_is_no_longer_asked_is_removed() {
     );
 }
 
+/// A GitHub release's file of the loader goes to both sides, as any jar no
+/// platform describes, and the next run downloads nothing.
+#[test]
+fn github_files_are_downloaded_once_and_placed_on_both_sides() {
+    let mut api = Api::new();
+    let url = api.server.url();
+    let assets: Vec<_> = ["touch-fabric-1.0.jar", "touch-neoforge-1.0.jar"]
+        .map(|name| {
+            json!({
+                "name": name, "size": name.len(),
+                "browser_download_url": format!("{url}/gh/{name}"),
+            })
+        })
+        .into();
+    let release = json!({
+        "tag_name": "v1", "draft": false, "prerelease": false, "assets": assets,
+    });
+    let _release = api
+        .server
+        .mock("GET", "/repos/o/touch/releases/tags/v1")
+        .with_body(release.to_string())
+        .create();
+    let file = api
+        .server
+        .mock("GET", "/gh/touch-fabric-1.0.jar")
+        .with_body("touch-fabric-1.0.jar")
+        .expect(1)
+        .create();
+    let cache = tempfile::tempdir().unwrap();
+    let platforms: Vec<Box<dyn mc_core::platform::Platform>> = vec![
+        Box::new(Modrinth::new(&url)),
+        Box::new(mc_core::platform::github::GitHub::new(
+            &url,
+            cache.path().to_path_buf(),
+        )),
+    ];
+    let registry = Registry::new(platforms);
+    let dir = tempfile::tempdir().unwrap();
+    let plan = plan(dir.path(), &["github:o/touch@v1"], &[], true);
+
+    for _ in 0..2 {
+        prepare(&plan, &pack(), &registry).unwrap();
+        for mods in ["mods", "server/mods"] {
+            assert_eq!(names(&dir.path().join(mods)), ["touch-fabric-1.0.jar"]);
+        }
+    }
+    file.assert();
+}
+
 /// A file of the profiles' local directory is copied to both sides, in the
 /// packs' order, kept by the next run, replaced when it changes, and removed
 /// once no longer asked.

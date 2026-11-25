@@ -130,8 +130,24 @@ fn unimplemented_pack_operations_fail_with_a_clear_error() {
 }
 
 #[test]
-fn builtin_registry_lists_modrinth_then_curseforge() {
-    assert_eq!(builtin().names(), ["modrinth", "curseforge"]);
+fn builtin_registry_lists_github_then_modrinth_then_curseforge() {
+    assert_eq!(builtin().names(), ["github", "modrinth", "curseforge"]);
+}
+
+/// A GitHub entry goes into a `.mrpack` by its release URL: GitHub builds no
+/// pack itself, so `modpack pack` never offers it.
+#[test]
+fn github_builds_no_pack() {
+    let github = builtin();
+    let github = github.get("github").unwrap();
+    assert_eq!(
+        github.capability(Operation::BuildPack),
+        Capability::Unsupported
+    );
+    assert_eq!(
+        github.capability(Operation::PushPage),
+        Capability::Unsupported
+    );
 }
 
 #[test]

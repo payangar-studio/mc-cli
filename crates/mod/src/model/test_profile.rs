@@ -238,6 +238,7 @@ pub struct Wanted {
 impl Wanted {
     pub fn parse(text: &str) -> Result<Self> {
         if text.trim().starts_with(github::PREFIX) {
+            github::check_query(text)?;
             return Ok(Self {
                 slug: text.trim().to_owned(),
                 version: None,
@@ -483,6 +484,10 @@ mod tests {
             (
                 "mods = [\"other/b.jar\"]\n",
                 "is neither a Modrinth project",
+            ),
+            (
+                "mods = [\"github:lithium@v1\"]\n",
+                "is not a GitHub repository",
             ),
             ("[options]\nkeys = [1]\n", "option `keys`"),
             ("[options]\nlang = \"a\\nb\"\n", "cannot be written"),

@@ -413,7 +413,9 @@ fn add_remote(
     let previous = manifest
         .entries
         .iter()
-        .find(|e| same_project(e.platform(name), &candidate.section))
+        // A GitHub repository can release a mod and a resource pack: the
+        // project is the same only for a file of the same kind.
+        .find(|e| e.kind == candidate.kind && same_project(e.platform(name), &candidate.section))
         .or_else(|| {
             manifest.entries.iter().find(|e| {
                 e.is_local()

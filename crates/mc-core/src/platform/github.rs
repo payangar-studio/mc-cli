@@ -10,8 +10,10 @@
 #[cfg(test)]
 mod tests;
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
@@ -37,6 +39,9 @@ pub struct GitHub {
     api: String,
     /// Where downloaded assets are kept, `<repo>/<tag>/<file>` under it.
     cache: PathBuf,
+    /// The releases already read, by repository and tag: resolving then
+    /// filling an entry asks the API once.
+    seen: Mutex<BTreeMap<(String, String), Release>>,
 }
 
 impl Default for GitHub {
@@ -65,6 +70,7 @@ impl GitHub {
             agent,
             api: api.trim_end_matches('/').to_owned(),
             cache,
+            seen: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -107,26 +113,45 @@ impl GitHub {
     }
 
     fn release(&self, repo: &str, tag: &str) -> Result<Release> {
-        self.get(&format!(
-            "/repos/{repo}/releases/tags/{}",
-            encode_segment(tag)
-        ))?
-        .ok_or_else(|| {
-            Error::usage(
-                format!("GitHub has no release `{tag}` of `{repo}`"),
-                format!("check the tag on https://github.com/{repo}/releases"),
-            )
-        })
+        let key = (repo.to_owned(), tag.to_owned());
+        if let Some(release) = self.seen().get(&key) {
+            return Ok(release.clone());
+        }
+        let release: Release = self
+            .get(&format!(
+                "/repos/{repo}/releases/tags/{}",
+                encode_segment(tag)
+            ))?
+            .ok_or_else(|| {
+                Error::usage(
+                    format!("GitHub has no release `{tag}` of `{repo}`"),
+                    format!("check the tag on https://github.com/{repo}/releases"),
+                )
+            })?;
+        self.seen().insert(key, release.clone());
+        Ok(release)
     }
 
     fn releases(&self, repo: &str) -> Result<Vec<Release>> {
-        self.get(&format!("/repos/{repo}/releases?per_page=100"))?
+        let releases: Vec<Release> = self
+            .get(&format!("/repos/{repo}/releases?per_page=100"))?
             .ok_or_else(|| {
                 Error::usage(
                     format!("GitHub has no public repository `{repo}`"),
                     "write it as `github:<owner>/<repo>`, as in its URL on github.com",
                 )
-            })
+            })?;
+        let mut seen = self.seen();
+        for release in &releases {
+            seen.insert((repo.to_owned(), release.tag_name.clone()), release.clone());
+        }
+        Ok(releases)
+    }
+
+    fn seen(&self) -> std::sync::MutexGuard<'_, BTreeMap<(String, String), Release>> {
+        self.seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// The cached copy of the asset `file` of release `tag` of `repo`,
@@ -369,13 +394,7 @@ impl Query {
             Some((repo, at)) => (repo, Some(at)),
             None => (rest, None),
         };
-        let valid_repo = repo.split('/').count() == 2
-            && repo.split('/').all(|s| {
-                !s.is_empty()
-                    && s.chars()
-                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-            });
-        if !valid_repo || at.is_some_and(str::is_empty) {
+        if !valid_repo(repo) || at.is_some_and(str::is_empty) {
             return Err(Error::usage(
                 format!("`{query}` is not a GitHub repository"),
                 "write `github:<owner>/<repo>`, optionally followed by `@<tag>` and `/<file>`, such as `github:CaffeineMC/lithium@mc26.3-0.26.4`",
@@ -421,6 +440,23 @@ impl Query {
     }
 }
 
+/// Whether `repo` is `<owner>/<repo>` as GitHub writes them.
+fn valid_repo(repo: &str) -> bool {
+    repo.split('/').count() == 2
+        && repo.split('/').all(|s| {
+            !s.is_empty()
+                && s != "."
+                && s != ".."
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        })
+}
+
+/// Checks that `query`, which starts with [`PREFIX`], is a GitHub query.
+pub fn check_query(query: &str) -> Result<()> {
+    Query::parse(query).map(|_| ())
+}
+
 /// Where an entry's table points.
 struct At {
     repo: String,
@@ -443,11 +479,27 @@ impl At {
                     )
                 })
         };
-        Ok(Self {
+        let at = Self {
             repo: field("repo")?,
             tag: field("tag")?,
             file: field("file")?,
-        })
+        };
+        // The repository and the file name a path under the cache.
+        if !valid_repo(&at.repo)
+            || at.file.is_empty()
+            || at.file.contains(['/', '\\'])
+            || at.file == "."
+            || at.file == ".."
+        {
+            return Err(Error::usage(
+                format!(
+                    "the GitHub table of `{}` names `{}` of `{}`, not a release file",
+                    entry.key, at.file, at.repo
+                ),
+                format!("add `{}` again from its GitHub release", entry.key),
+            ));
+        }
+        Ok(at)
     }
 
     fn gone(&self, key: &str) -> Error {
@@ -461,7 +513,7 @@ impl At {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct Release {
     tag_name: String,
     #[serde(default)]
@@ -475,11 +527,17 @@ struct Release {
 }
 
 impl Release {
-    /// Whether its tag, title or a file name holds `minecraft`.
+    /// Whether its tag, title or a file name names the version `minecraft`.
     fn mentions(&self, minecraft: &str) -> bool {
-        self.tag_name.contains(minecraft)
-            || self.name.as_deref().is_some_and(|n| n.contains(minecraft))
-            || self.assets.iter().any(|a| a.name.contains(minecraft))
+        names_version(&self.tag_name, minecraft)
+            || self
+                .name
+                .as_deref()
+                .is_some_and(|n| names_version(n, minecraft))
+            || self
+                .assets
+                .iter()
+                .any(|a| names_version(&a.name, minecraft))
     }
 
     /// The files `file` can mean: that file when named; else the jars, or the
@@ -516,7 +574,7 @@ impl Release {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct Asset {
     name: String,
     size: u64,
@@ -524,4 +582,21 @@ struct Asset {
     /// `sha256:<hex>`; absent on assets uploaded before GitHub computed it.
     #[serde(default)]
     digest: Option<String>,
+}
+
+/// Whether `text` holds `version` as a whole version: `1.21` is in
+/// `mod-1.21-2.0.jar` and `mc1.21`, not in `mod-1.21.1.jar` nor `11.21`.
+fn names_version(text: &str, version: &str) -> bool {
+    if version.is_empty() {
+        return false;
+    }
+    let numeric = |c: Option<char>| c.is_some_and(|c| c.is_ascii_digit());
+    text.match_indices(version).any(|(at, _)| {
+        let mut before = text[..at].chars().rev();
+        let mut after = text[at + version.len()..].chars();
+        let (b, a) = (before.next(), after.next());
+        let continues_before = numeric(b) || (b == Some('.') && numeric(before.next()));
+        let continues_after = numeric(a) || (a == Some('.') && numeric(after.next()));
+        !continues_before && !continues_after
+    })
 }

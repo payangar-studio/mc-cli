@@ -214,6 +214,84 @@ fn without_a_tag_the_latest_fitting_release_comes_first() {
     assert_eq!(labels, ["mc26.3-1.1", "mc26.3-1.2-beta"]);
 }
 
+/// Resolving then filling an entry reads its release once: the API allows
+/// 60 anonymous requests an hour.
+#[test]
+fn a_release_is_read_once() {
+    let mut api = Api::new();
+    let release = api.release("v1", false, &["a.jar"]);
+    let tag = api
+        .server
+        .mock("GET", "/repos/o/a/releases/tags/v1")
+        .with_body(release.to_string())
+        .expect(1)
+        .create();
+    let _file = api.file("a.jar", 1);
+    let github = api.github();
+    let mut e = entry(&github, "github:o/a@v1");
+    github.fill_entry(&mut e).unwrap();
+    tag.assert();
+}
+
+/// A Minecraft version is matched whole: a release for 1.21.1 is not one
+/// for 1.21.
+#[test]
+fn a_release_names_a_minecraft_version_whole() {
+    for text in [
+        "mc1.21-0.5",
+        "mod-1.21.jar",
+        "1.21",
+        "v1.21.x",
+        "1.21+fabric",
+    ] {
+        assert!(names_version(text, "1.21"), "{text}");
+    }
+    for text in ["mod-1.21.1.jar", "11.21", "mc1.21.10", "0.1.21-mc26.3"] {
+        assert!(!names_version(text, "1.21"), "{text}");
+    }
+}
+
+/// An entry's table names a path under the cache: one that leaves it is
+/// refused.
+#[test]
+fn a_table_cannot_name_a_path_outside_the_cache() {
+    let api = Api::new();
+    let github = api.github();
+    for (repo, file) in [
+        ("o/a", "../../x.jar"),
+        ("o/a", "d/x.jar"),
+        ("../a", "x.jar"),
+    ] {
+        let mut table = toml::Table::new();
+        table.insert("repo".into(), repo.into());
+        table.insert("tag".into(), "v1".into());
+        table.insert("file".into(), file.into());
+        let entry = Entry {
+            key: "x".into(),
+            kind: Kind::Mod,
+            path: "mods/x.jar".into(),
+            file_size: 1,
+            downloads: vec!["https://example.invalid/x.jar".into()],
+            url: None,
+            source: None,
+            approved: None,
+            hashes: Hashes {
+                sha1: String::new(),
+                sha512: String::new(),
+            },
+            env: Kind::Mod.default_env(),
+            platforms: [(NAME.to_owned(), table)].into(),
+        };
+        let Err(err) = github.download(&entry) else {
+            panic!("{repo} {file}: refused");
+        };
+        assert!(
+            err.to_string().contains("not a release file"),
+            "{repo} {file}: {err}"
+        );
+    }
+}
+
 #[test]
 fn a_resource_pack_is_a_zip_of_a_release_without_jar() {
     let mut api = Api::new();

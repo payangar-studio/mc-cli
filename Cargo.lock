@@ -1517,7 +1517,7 @@ dependencies = [
 
 [[package]]
 name = "mc-core"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "clap",
  "dialoguer",
@@ -1543,7 +1543,7 @@ dependencies = [
 
 [[package]]
 name = "mc-mod"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -1632,7 +1632,7 @@ dependencies = [
 
 [[package]]
 name = "modpack"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "assert_cmd",
  "clap",

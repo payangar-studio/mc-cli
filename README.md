@@ -29,7 +29,7 @@ Every command also runs without a terminal (AI agent, git hook, CI): it asks not
 Each [release](https://github.com/payangar-studio/mc-cli/releases) carries a static Linux build of each binary, `<binary>-<version>-x86_64-unknown-linux-musl.tar.gz`, with its `.sha256`. On Linux x86_64:
 
 ```sh
-version=0.7.1
+version=0.8.0
 for bin in modpack mod; do
   archive="$bin-$version-x86_64-unknown-linux-musl.tar.gz"
   curl -LO "https://github.com/payangar-studio/mc-cli/releases/download/v$version/$archive"

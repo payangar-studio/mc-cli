@@ -166,12 +166,12 @@ pub fn run(args: Args, ctx: &Context) -> Result<()> {
     );
     match branch {
         design::Branch::Created => println!(
-            "Created the `{}` branch: the design of the mod, built into a page by the `mod-design` skill.",
+            "Created the `{}` branch: the design of the mod, built into a page by the `mod-wiki-design` skill.",
             design::BRANCH
         ),
         design::Branch::Exists => println!("Kept the existing `{}` branch.", design::BRANCH),
         design::Branch::Clash(names) => println!(
-            "Could not create the `{0}` branch: git cannot have it beside the branches under `{0}/` ({1}). Rename them, then create `{0}` as the `mod-design` skill says.",
+            "Could not create the `{0}` branch: git cannot have it beside the branches under `{0}/` ({1}). Rename them, then create `{0}` as the `mod-wiki-design` skill says.",
             design::BRANCH,
             names.join(", ")
         ),

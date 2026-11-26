@@ -1,5 +1,5 @@
 //! The `design` branch `mod init` creates and keeps local (`mod setup`
-//! publishes it, see `crates/mod/src/github/tests.rs`), and the `mod-design`
+//! publishes it, see `crates/mod/src/github/tests.rs`), and the `mod-wiki-design`
 //! skill with the check of its output.
 
 use std::fs;
@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command as Process;
 
 use assert_cmd::Command;
-use mc_mod::model::socle::SocleLock;
+use mc_mod::model::sha256_bytes;
+use mc_mod::model::socle::{LockedFile, LockedKind, SocleConfig, SocleLock};
 use mc_mod::socle::SOCLE;
 use predicates::prelude::*;
 
@@ -21,8 +22,10 @@ const INIT_ARGS: &[&str] = &[
     "--mc-version=26.3",
 ];
 
-const SKILL: &str = ".claude/skills/mod-design/SKILL.md";
-const CHECK: &str = ".claude/skills/mod-design/check-page.sh";
+const SKILL: &str = ".claude/skills/mod-wiki-design/SKILL.md";
+const CHECK: &str = ".claude/skills/mod-wiki-design/check-page.sh";
+const FEATURE_SKILL: &str = ".claude/skills/mod-feature-design/SKILL.md";
+const RESEARCH: &str = ".claude/agents/mod-research.md";
 
 /// The binary without a terminal, with a machine configuration and a git
 /// identity of its own.
@@ -222,19 +225,115 @@ fn init_leaves_the_remote_alone() {
 }
 
 #[test]
-fn init_lays_down_the_design_skill() {
+fn init_lays_down_the_design_skills_and_the_research_agent() {
     let (_tmp, root) = init_repo();
-    let text = fs::read_to_string(root.join(SKILL)).unwrap();
-    let front = text
-        .strip_prefix("---\n")
-        .and_then(|rest| rest.split_once("\n---\n"))
-        .map(|(front, _)| front)
-        .expect("a frontmatter");
-    assert!(front.contains("name: mod-design\n"));
-    assert!(front.contains("Use when"));
-    assert!(!text.contains('\u{2014}'), "no em dash in AI texts");
+    for (path, name) in [
+        (SKILL, "mod-wiki-design"),
+        (FEATURE_SKILL, "mod-feature-design"),
+        (RESEARCH, "mod-research"),
+    ] {
+        let text = fs::read_to_string(root.join(path)).unwrap();
+        let front = text
+            .strip_prefix("---\n")
+            .and_then(|rest| rest.split_once("\n---\n"))
+            .map(|(front, _)| front)
+            .expect("a frontmatter");
+        assert!(front.contains(&format!("name: {name}\n")), "{path}");
+        assert!(front.contains("Use "), "{path} says when to use it");
+        assert!(!text.contains('\u{2014}'), "no em dash in AI texts");
+    }
     let lock = SocleLock::load(&SOCLE, &root).unwrap();
-    for path in [SKILL, CHECK] {
+    for path in [SKILL, CHECK, FEATURE_SKILL, RESEARCH] {
+        assert!(
+            lock.files.iter().any(|f| f.path == path),
+            "{path} not owned"
+        );
+    }
+}
+
+/// The feature design skill records the mods to keep working on the design
+/// home document.
+#[test]
+fn the_design_home_has_the_mods_to_keep_working() {
+    let (_tmp, root) = init_repo();
+    let overview = git(&root, &["show", "design:docs/design/00-overview.md"]);
+    assert!(
+        overview.contains("\n## Mods to keep working\n"),
+        "{overview}"
+    );
+    let skill = fs::read_to_string(root.join(FEATURE_SKILL)).unwrap();
+    let skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(skill.contains("\"Mods to keep working\" table"), "{skill}");
+}
+
+/// The wiki skill was `mod-design`: nothing the socle or `init` writes still
+/// names it.
+#[test]
+fn no_file_names_the_old_design_skill() {
+    let (_tmp, root) = init_repo();
+    for file in SOCLE.files_in(&root).unwrap() {
+        let text = String::from_utf8_lossy(&file.contents);
+        assert!(!text.contains("mod-design"), "{}", file.path);
+    }
+    for path in ["AGENTS.md", ".gitignore"] {
+        let text = fs::read_to_string(root.join(path)).unwrap();
+        assert!(!text.contains("mod-design"), "{path}");
+    }
+    for path in git(&root, &["ls-tree", "-r", "--name-only", "design"]).lines() {
+        let text = git(&root, &["show", &format!("design:{path}")]);
+        assert!(!text.contains("mod-design"), "design:{path}");
+    }
+}
+
+/// A mod from before the feature design skill: `update` adds it with its
+/// research agent, and replaces `mod-design` by `mod-wiki-design`.
+#[test]
+fn update_brings_the_design_skills_to_an_older_mod() {
+    let (_tmp, root) = init_repo();
+    let old = [
+        (
+            ".claude/skills/mod-design/SKILL.md",
+            "---\nname: mod-design\n---\n",
+        ),
+        (".claude/skills/mod-design/check-page.sh", "#!/bin/sh\n"),
+    ];
+    let new = [SKILL, CHECK, FEATURE_SKILL, RESEARCH];
+    for dir in [
+        ".claude/skills/mod-wiki-design",
+        ".claude/skills/mod-feature-design",
+        ".claude/agents",
+        ".claude/skills/mod-design",
+    ] {
+        let _ = fs::remove_dir_all(root.join(dir));
+    }
+    fs::create_dir_all(root.join(".claude/skills/mod-design")).unwrap();
+    let mut lock = SocleLock::load(&SOCLE, &root).unwrap();
+    lock.files.retain(|f| !new.contains(&f.path.as_str()));
+    for (path, content) in old {
+        fs::write(root.join(path), content).unwrap();
+        lock.files.push(LockedFile {
+            path: path.into(),
+            sha256: sha256_bytes(content.as_bytes()),
+            kind: LockedKind::File,
+        });
+    }
+    lock.save(&SOCLE, &root).unwrap();
+    let mut config = SocleConfig::load(&SOCLE, &root).unwrap();
+    config.version = "0.6.0".into();
+    config.save(&SOCLE, &root).unwrap();
+
+    bin(&root)
+        .arg("update")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!("Removed {}", old[0].0)));
+    assert!(!root.join(".claude/skills/mod-design").exists());
+    let lock = SocleLock::load(&SOCLE, &root).unwrap();
+    for (path, _) in old {
+        assert!(lock.files.iter().all(|f| f.path != path), "{path} kept");
+    }
+    for path in new {
+        assert!(root.join(path).is_file(), "{path} missing");
         assert!(
             lock.files.iter().any(|f| f.path == path),
             "{path} not owned"

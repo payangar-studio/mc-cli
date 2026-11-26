@@ -9,7 +9,7 @@ This repository is a Minecraft mod managed with `mc-cli` (`mod` binary). Each Mi
 - `changelogs/`: the release notes, one file per version, written by hand.
 - `common/`, `fabric/`, `neoforge/`: the mod's code, one subproject per loader plus the shared code; a single-loader mod has only its loader's subproject.
 - Mixin configurations: in the resources of the subproject holding their mixins, named `<id>.mixins.json` (every loader), `<id>.fabric.mixins.json` or `<id>.neoforge.mixins.json` (one loader), `<id>.client.mixins.json` (Fabric client resources). The build declares only these names.
-- The socle, rewritten by `mod update`: `.mod/`, `build-logic/`, the Gradle wrapper and `settings.gradle.kts`, the socle's skills, its workflows (`mod-` prefix) and this block.
+- The socle, rewritten by `mod update`: `.mod/`, `build-logic/`, the Gradle wrapper and `settings.gradle.kts`, the socle's skills and agents, its workflows (`mod-` prefix) and this block.
 
 ### Use the CLI
 
@@ -46,7 +46,7 @@ Every command runs without a terminal: a missing value is an error that names th
 
 ### Never
 
-- Edit a file of the socle: `build-logic/` (including the loader metadata templates of `build-logic/templates/`), the `vendor` packages, `.mod/`, the socle's skills and workflows. `mod update` rewrites them and refuses to overwrite a hand edit.
+- Edit a file of the socle: `build-logic/` (including the loader metadata templates of `build-logic/templates/`), the `vendor` packages, `.mod/`, the socle's skills, agents and workflows. `mod update` rewrites them and refuses to overwrite a hand edit.
 - Push a `v*` tag without the user's go: a tag publishes the mod.
 - Print, ask for or store a secret. Publication runs in CI only, with the vault's tokens.
 

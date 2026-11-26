@@ -1,6 +1,6 @@
 ---
-name: mod-design
-description: Build or update the design wiki of this mod, the HTML pages of `docs/design/` on the `design` branch (a tree: the home page `index.html`, a page per feature, sub-pages, each saying what happens in game before how it is built), from the design documents next to them (`docs/design/**/*.md`), as self-contained pages that developers read without Claude, published by GitHub Pages. Use when the design documents changed and the pages must follow, when asked to build, refresh or rework the design, or when someone finds it unclear or thin ("too much text", "I cannot see how the sides talk", "it lacks detail", "split it into pages", "everything is at the same level", "mixes functional and technical"). Not for writing the design itself, which happens in the Markdown documents.
+name: mod-wiki-design
+description: Build or update the design wiki of this mod, the HTML pages of `docs/design/` on the `design` branch (a tree: the home page `index.html`, a page per feature, sub-pages, each saying what happens in game before how it is built), from the design documents next to them (`docs/design/**/*.md`), as self-contained pages that developers read without Claude, published by GitHub Pages. Use when the design documents changed and the pages must follow, when asked to build, refresh or rework the design, or when someone finds it unclear or thin ("too much text", "I cannot see how the sides talk", "it lacks detail", "split it into pages", "everything is at the same level", "mixes functional and technical"). Not for designing a feature, which is mod-feature-design and happens in the Markdown documents.
 ---
 
 # Design wiki of the mod
@@ -44,8 +44,8 @@ The wiki is a tree, not a flat list:
 
 - **The home page** (`index.html`, from `00-overview.md`) stays at the level
   of the mod: what it adds and what the player does with it, one diagram of
-  the whole, its features with one line each, the glossary, and the open
-  questions with a link to each.
+  the whole, its features with one line each, the mods it must keep working
+  with, the glossary, and the open questions with a link to each.
 - **One page per feature** (`<feature>/index.html`, from
   `<feature>/00-overview.md`): a part of the mod a player can name (a mob, a
   mechanic, a block family, a system such as ownership), at the level of the

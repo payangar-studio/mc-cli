@@ -7,7 +7,7 @@
 //! `mod init` writes the branch with git plumbing (blobs, trees, one commit,
 //! the ref), so the working tree, the index and the current branch are left
 //! alone. It stays local: `mod setup` pushes it and sets Pages once the
-//! version branch is on GitHub ([`pages`]). The `mod-design` skill builds the
+//! version branch is on GitHub ([`pages`]). The `mod-wiki-design` skill builds the
 //! pages from the documents.
 
 pub mod pages;

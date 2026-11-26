@@ -15,7 +15,7 @@ on:
   workflow_call:
     inputs:
       modpack-version:
-        description: Release of mc-cli to run (v0.8.0), or `latest`
+        description: Release of mc-cli to run (v0.8.1), or `latest`
         type: string
         default: latest
       variants:

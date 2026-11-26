@@ -2,9 +2,8 @@
 //! every case passes on both loaders; and each case fails on a deliberate
 //! defect. They download Gradle, the loaders, Minecraft and HeadlessMC and
 //! start servers and clients, so they are `#[ignore]`
-//! (`cargo test -p mc-mod --test side_matrix -- --ignored`): the workflow
-//! `.github/workflows/mod-sides.yml` runs them on main and on the pull requests
-//! its `paths` let through. They need a JDK 25, and Linux or macOS.
+//! (`cargo test -p mc-mod --test side_matrix -- --ignored`) and run locally
+//! only, no CI job runs them. They need a JDK 25, and Linux or macOS.
 
 use std::fs;
 use std::path::{Path, PathBuf};

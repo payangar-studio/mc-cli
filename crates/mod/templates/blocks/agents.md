@@ -36,6 +36,11 @@ Every command runs without a terminal: a missing value is an error that names th
 - A screen: a screenshot test.
 - Done means these pass locally and CI is green on the pushed branch.
 
+### Building an issue
+
+- Before coding, open a draft pull request that closes the issue (`Closes #N`). Its description is the checklist of the steps and the proof, written from the issue and the design.
+- Check each box once done; strike a box dropped on purpose and say why. Mark the pull request ready only once every box is checked or struck.
+
 ### Sides
 
 - The side is set once, as `side` in `mod.toml`: `client`, `server`, `both-required` or `both-optional`. The loader metadata, the platform sides, the config scopes and the test matrix follow from it; change it there only.

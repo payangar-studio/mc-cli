@@ -102,7 +102,9 @@ design is the reference; the conversation is not. Once the documents hold the
 design, build the wiki pages from them with `mod-wiki-design`.
 
 The last step is the issue of the first brick: scope, out of scope, and the
-proof expected (the tests, and what is checked in game). Show it to the user
-before writing it to GitHub.
+proof expected (the tests, and what is checked in game). Write them in prose,
+without task lists: the checklist belongs to the draft pull request that
+builds the brick, as `AGENTS.md` says. Show the issue to the user before
+writing it to GitHub.
 
 Done when the design and the issue agree, and the user has the issue.
